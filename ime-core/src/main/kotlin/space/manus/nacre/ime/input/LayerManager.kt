@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import space.manus.nacre.config.DefaultLayouts
 import space.manus.nacre.config.KeyboardLayout
+import space.manus.nacre.config.PresetProvider
 
 enum class Layer {
     Base,
@@ -21,6 +22,10 @@ class LayerManager {
 
     var isJapanese by mutableStateOf(false)
         private set
+
+    var isCommandPaletteRequested by mutableStateOf(false)
+
+    var activePreset: PresetProvider.PresetType = PresetProvider.PresetType.Default
 
     fun toggleFn() {
         currentLayer = when (currentLayer) {
@@ -50,8 +55,12 @@ class LayerManager {
         isJapanese = !isJapanese
     }
 
+    fun requestCommandPalette() {
+        isCommandPaletteRequested = true
+    }
+
     fun currentLayout(): KeyboardLayout = when (currentLayer) {
-        Layer.Base -> DefaultLayouts.qwertyBase
+        Layer.Base -> PresetProvider.getLayout(activePreset)
         Layer.Fn1 -> DefaultLayouts.fnLayer1
         Layer.Fn2 -> DefaultLayouts.fnLayer2
     }

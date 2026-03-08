@@ -20,3 +20,4 @@ rootProject.name = "Nacre"
 include(":app")
 include(":ime-core")
 include(":ime-config")
+include(":ime-ai")

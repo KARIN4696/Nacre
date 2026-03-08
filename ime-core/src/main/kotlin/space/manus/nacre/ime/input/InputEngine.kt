@@ -150,6 +150,12 @@ class InputEngine(private val service: NacreInputMethodService) {
             }
 
             is KeyAction.Space -> {
+                // Fn + Space → command palette
+                if (service.layerManager.currentLayer != space.manus.nacre.ime.input.Layer.Base) {
+                    service.layerManager.requestCommandPalette()
+                    service.layerManager.resetToBase()
+                    return
+                }
                 if (composingText.isNotEmpty()) {
                     if (isConverting) {
                         // Cycle to next candidate
