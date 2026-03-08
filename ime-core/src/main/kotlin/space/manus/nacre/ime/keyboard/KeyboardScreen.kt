@@ -19,8 +19,8 @@ fun KeyboardScreen(service: NacreInputMethodService) {
     val layerManager = service.layerManager
     val layout = layerManager.currentLayout()
     val theme = ThemeProvider.loadSelectedTheme(service)
-    val bgColor = Color(theme.background.toULong())
-    val accentColor = Color(theme.accent.toULong())
+    val bgColor = Color(theme.background.toInt())
+    val accentColor = Color(theme.accent.toInt())
 
     // Panel state
     var showClipboard by remember { mutableStateOf(false) }

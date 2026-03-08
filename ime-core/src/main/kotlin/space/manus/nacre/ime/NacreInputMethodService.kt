@@ -30,6 +30,7 @@ import space.manus.nacre.ime.input.NacreDictionary
 import space.manus.nacre.ime.input.PhysicalKeyboardDetector
 import space.manus.nacre.ime.input.SnippetEngine
 import space.manus.nacre.ime.keyboard.KeyboardScreen
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -117,16 +118,26 @@ class NacreInputMethodService :
             return existing
         }
 
-        val view = ComposeView(this).apply {
-            setViewTreeLifecycleOwner(this@NacreInputMethodService)
-            setViewTreeViewModelStoreOwner(this@NacreInputMethodService)
-            setViewTreeSavedStateRegistryOwner(this@NacreInputMethodService)
-            setContent {
-                KeyboardScreen(service = this@NacreInputMethodService)
+        return try {
+            val view = ComposeView(this).apply {
+                setViewTreeLifecycleOwner(this@NacreInputMethodService)
+                setViewTreeViewModelStoreOwner(this@NacreInputMethodService)
+                setViewTreeSavedStateRegistryOwner(this@NacreInputMethodService)
+                setContent {
+                    KeyboardScreen(service = this@NacreInputMethodService)
+                }
+            }
+            composeView = view
+            view
+        } catch (e: Exception) {
+            Log.e("NacreIME", "Failed to create input view", e)
+            // Return a minimal fallback view so the IME doesn't crash silently
+            android.widget.TextView(this).apply {
+                text = "Nacre: keyboard load error"
+                setTextColor(android.graphics.Color.WHITE)
+                setBackgroundColor(android.graphics.Color.BLACK)
             }
         }
-        composeView = view
-        return view
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
