@@ -23,6 +23,7 @@ import space.manus.nacre.ime.keyboard.KeyboardScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class NacreInputMethodService :
@@ -99,6 +100,7 @@ class NacreInputMethodService :
     override fun onEvaluateFullscreenMode(): Boolean = false
 
     override fun onDestroy() {
+        serviceScope.cancel()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()

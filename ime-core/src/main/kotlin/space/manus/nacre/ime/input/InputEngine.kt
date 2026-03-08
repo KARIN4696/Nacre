@@ -27,7 +27,8 @@ class InputEngine(private val service: NacreInputMethodService) {
     var isConverting by mutableStateOf(false)
         private set
 
-    // Dictionary reference (set by service after loading)
+    // Dictionary reference (set from IO thread after loading)
+    @Volatile
     var dictionary: DictionaryProvider? = null
 
     fun onStartInput(info: EditorInfo?) {

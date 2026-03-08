@@ -137,7 +137,8 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         while (idx < sortedReadings.size && sortedReadings[idx].startsWith(kana)) {
             val reading = sortedReadings[idx]
             if (reading != kana) { // Skip exact matches (already added)
-                val entries = dict[reading] ?: continue
+                val entries = dict[reading]
+                if (entries == null) { idx++; continue }
                 for (entry in entries.take(3)) {
                     results.add(
                         ConversionCandidate(
