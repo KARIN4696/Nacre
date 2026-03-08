@@ -62,7 +62,7 @@ object DefaultLayouts {
                 // Trackball area
                 key("b", swipeUp = "\\"), key("n", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
-                key(",", label = ",", swipeUp = "<", swipeRight = ">"),
+                key(",", label = ",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
             ),
             // Row 4: Modifiers
             listOf(

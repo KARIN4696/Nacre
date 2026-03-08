@@ -104,7 +104,10 @@ class NacreInputMethodService :
     override fun onDestroy() {
         (inputEngine.dictionary as? NacreDictionary)?.flushPendingSave()
         serviceScope.cancel()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        // Only move to ON_STOP if not already stopped (onWindowHidden may have already done it)
+        if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         composeView = null

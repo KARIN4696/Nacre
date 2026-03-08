@@ -15,7 +15,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -43,6 +45,7 @@ fun KeyView(
     var isPressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "keyScale")
     val swipeThresholdPx = with(LocalDensity.current) { 12.dp.toPx() }
+    val haptic = LocalHapticFeedback.current
 
     val isActionKey = keyDef.action is KeyAction.Backspace ||
         keyDef.action is KeyAction.Enter ||
@@ -126,10 +129,12 @@ fun KeyView(
                             } else {
                                 if (totalDragY > 0) SwipeDirection.Down else SwipeDirection.Up
                             }
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             service.inputEngine.processSwipe(keyDef, direction)
                         }
                         holdDuration >= 350L -> {
                             // Long press — route through InputEngine
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             if (keyDef.action is KeyAction.Fn) {
                                 service.inputEngine.processAction(KeyAction.Escape)
                             } else if (keyDef.longPress != null) {
@@ -138,6 +143,7 @@ fun KeyView(
                         }
                         else -> {
                             // Tap
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             service.inputEngine.processKey(keyDef)
                         }
                     }

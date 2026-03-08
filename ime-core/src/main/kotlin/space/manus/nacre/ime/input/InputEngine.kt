@@ -72,6 +72,16 @@ class InputEngine(private val service: NacreInputMethodService) {
             SwipeDirection.Left -> keyDef.swipeLeft
             SwipeDirection.Right -> keyDef.swipeRight
         } ?: return
+
+        // Commit any active composition before inserting swipe text
+        val ic = service.currentInputConnection
+        if (ic != null && composingText.isNotEmpty()) {
+            if (isConverting) {
+                commitSelectedCandidate(ic)
+            } else {
+                finishComposing(ic)
+            }
+        }
         commitText(text)
     }
 
