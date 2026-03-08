@@ -119,13 +119,21 @@ class NacreInputMethodService :
         }
 
         // Advance lifecycle so ComposeView can start composition.
-        // onCreateInputView() is called before onWindowShown(), so lifecycle
-        // would still be CREATED — Compose requires at least STARTED.
         if (!lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         }
         if (!lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+
+        // Set ViewTree owners on the IME window's decor view so that
+        // ComposeView can find them when attached to the parent hierarchy.
+        // Without this, ComposeView throws IllegalStateException:
+        // "ViewTreeLifecycleOwner not found from android.widget.LinearLayout"
+        window?.window?.decorView?.let { decorView ->
+            decorView.setViewTreeLifecycleOwner(this)
+            decorView.setViewTreeViewModelStoreOwner(this)
+            decorView.setViewTreeSavedStateRegistryOwner(this)
         }
 
         return try {
