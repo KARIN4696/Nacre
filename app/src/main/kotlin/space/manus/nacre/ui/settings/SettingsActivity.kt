@@ -9,16 +9,20 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.io.File
 
 private val NacreBackground = Color(0xFF1A1A2E)
 private val NacreSurface = Color(0xFF16213E)
@@ -39,10 +43,22 @@ class SettingsActivity : ComponentActivity() {
 fun NacreSettingsScreen() {
     val context = LocalContext.current
 
+    // Read crash log from internal storage
+    val crashLog = remember {
+        try {
+            val logDir = File(context.filesDir, "crash-logs")
+            logDir.listFiles()
+                ?.sortedByDescending { it.lastModified() }
+                ?.firstOrNull()
+                ?.readText()
+        } catch (_: Exception) { null }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(NacreBackground)
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -91,6 +107,34 @@ fun NacreSettingsScreen() {
             fontSize = 12.sp,
             color = NacreTextDim,
         )
+
+        // Crash log section
+        if (crashLog != null) {
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "Last Crash Log",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFFF6B6B),
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0A0A1A)),
+            ) {
+                Text(
+                    text = crashLog,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = NacreText,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+        }
     }
 }
 
