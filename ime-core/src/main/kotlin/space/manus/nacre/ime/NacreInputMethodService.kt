@@ -118,6 +118,16 @@ class NacreInputMethodService :
             return existing
         }
 
+        // Advance lifecycle so ComposeView can start composition.
+        // onCreateInputView() is called before onWindowShown(), so lifecycle
+        // would still be CREATED — Compose requires at least STARTED.
+        if (!lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        }
+        if (!lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+
         return try {
             val view = ComposeView(this).apply {
                 setViewTreeLifecycleOwner(this@NacreInputMethodService)
@@ -131,7 +141,6 @@ class NacreInputMethodService :
             view
         } catch (e: Exception) {
             Log.e("NacreIME", "Failed to create input view", e)
-            // Return a minimal fallback view so the IME doesn't crash silently
             android.widget.TextView(this).apply {
                 text = "Nacre: keyboard load error"
                 setTextColor(android.graphics.Color.WHITE)
@@ -147,8 +156,12 @@ class NacreInputMethodService :
 
     override fun onWindowShown() {
         super.onWindowShown()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        if (!lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        }
+        if (!lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
     }
 
     override fun onWindowHidden() {

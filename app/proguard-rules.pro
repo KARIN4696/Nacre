@@ -1,27 +1,31 @@
 # Nacre IME ProGuard Rules
 
-# Keep InputMethodService
--keep class space.manus.nacre.ime.NacreInputMethodService { *; }
+# Keep all IME classes (service, input, keyboard, feedback, foldable)
+-keep class space.manus.nacre.ime.** { *; }
+
+# Keep Application class
+-keep class space.manus.nacre.NacreApplication { *; }
+
+# Keep Settings Activity
+-keep class space.manus.nacre.ui.settings.** { *; }
 
 # Keep AI Services (separate processes)
--keep class space.manus.nacre.ai.WhisperService { *; }
--keep class space.manus.nacre.ai.LlmService { *; }
+-keep class space.manus.nacre.ai.** { *; }
 
-# Keep DictionaryProvider interface
--keep interface space.manus.nacre.ime.input.DictionaryProvider { *; }
--keep class space.manus.nacre.ime.input.NacreDictionary { *; }
-
-# Keep config classes (used in JSON serialization)
+# Keep config classes
 -keep class space.manus.nacre.config.** { *; }
 
-# Keep macro/snippet data classes (JSON persistence)
--keep class space.manus.nacre.ime.input.MacroEngine$Macro { *; }
--keep class space.manus.nacre.ime.input.MacroEngine$MacroStep { *; }
--keep class space.manus.nacre.ime.input.SnippetEngine$Snippet { *; }
--keep class space.manus.nacre.ime.input.AutoConvertEngine$ConvertRule { *; }
+# Keep Lifecycle/ViewModel/SavedState owners
+-keep class * implements androidx.lifecycle.LifecycleOwner { *; }
+-keep class * implements androidx.lifecycle.ViewModelStoreOwner { *; }
+-keep class * implements androidx.savedstate.SavedStateRegistryOwner { *; }
 
-# Compose
+# Compose — do not strip or rename
+-keep class androidx.compose.** { *; }
 -dontwarn androidx.compose.**
+
+# Lifecycle
+-keep class androidx.lifecycle.** { *; }
 
 # Kotlin
 -dontwarn kotlin.**
