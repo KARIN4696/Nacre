@@ -37,37 +37,44 @@ object DefaultLayouts {
         rows = listOf(
             // Row 1: Q-P
             listOf(
-                key("q", swipeUp = "1"), key("w", swipeUp = "2"), key("e", swipeUp = "3"),
+                key("q", swipeUp = "1", swipeLeft = "~", swipeRight = "`"),
+                key("w", swipeUp = "2"), key("e", swipeUp = "3"),
                 key("r", swipeUp = "4"), key("t", swipeUp = "5"),
-                // Trackball placeholder — handled separately
-                key("y", swipeUp = "6"), key("u", swipeUp = "7"), key("i", swipeUp = "8"),
-                key("o", swipeUp = "9"), key("p", swipeUp = "0"),
+                key("y", swipeUp = "6"), key("u", swipeUp = "7"),
+                key("i", swipeUp = "8"), key("o", swipeUp = "9"),
+                key("p", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
             // Row 2: A-;
             listOf(
-                key("a", swipeUp = "@"), key("s", swipeUp = "#"), key("d", swipeUp = "$"),
+                key("a", swipeUp = "@", swipeLeft = "{", swipeRight = "}"),
+                key("s", swipeUp = "#"), key("d", swipeUp = "$"),
                 key("f", swipeUp = "%"), key("g", swipeUp = "&"),
-                key("h", swipeUp = "*"), key("j", swipeUp = "("), key("k", swipeUp = ")"),
-                key("l", swipeUp = "-"), key(";", label = ";", swipeUp = ":"),
+                key("h", swipeUp = "*"), key("j", swipeUp = "("),
+                key("k", swipeUp = ")"), key("l", swipeUp = "-", swipeRight = "="),
+                key(";", label = ";", swipeUp = ":", swipeRight = "'"),
             ),
             // Row 3: Z-,
             listOf(
-                key("z", swipeUp = "!"), key("x", swipeUp = "\""), key("c", swipeUp = "'"),
-                key("v", swipeUp = "/"),
+                key("z", swipeUp = "!", swipeLeft = "\""),
+                key("x", swipeUp = "\"", swipeRight = "'"),
+                key("c", swipeUp = "'"),
+                key("v", swipeUp = "/", swipeRight = "|"),
                 // Trackball area
                 key("b", swipeUp = "\\"), key("n", swipeUp = "?"),
-                key("m", swipeUp = "+"), key(",", label = ",", swipeUp = "<"),
+                key("m", swipeUp = "+", swipeRight = "="),
+                key(",", label = ",", swipeUp = "<", swipeRight = ">"),
             ),
             // Row 4: Modifiers
             listOf(
-                KeyDef("Tab", action = KeyAction.Tab, widthMultiplier = 1.1f),
-                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 1.1f),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f),
-                KeyDef("GL", action = KeyAction.SwitchIme),
+                KeyDef("⇧", action = KeyAction.Shift),
+                KeyDef("Tab", action = KeyAction.Tab),
+                KeyDef("Fn", action = KeyAction.Fn),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 1.5f),
+                KeyDef("あa", action = KeyAction.ToggleJapanese),
                 // Trackball area
-                KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                key(".", swipeUp = ">"),
+                KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.1f),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.1f),
+                KeyDef("GL", action = KeyAction.SwitchIme),
             ),
         ),
     )

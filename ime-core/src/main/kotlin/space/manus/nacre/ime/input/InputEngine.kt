@@ -51,7 +51,9 @@ class InputEngine(private val service: NacreInputMethodService) {
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
             val isUri = variation == InputType.TYPE_TEXT_VARIATION_URI
 
-            if (isPassword || isNumber || isEmail || isUri) {
+            val noSuggestions = info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0
+
+            if (isPassword || isNumber || isEmail || isUri || noSuggestions) {
                 if (service.layerManager.isJapanese) {
                     service.layerManager.toggleJapanese()
                 }
@@ -102,7 +104,8 @@ class InputEngine(private val service: NacreInputMethodService) {
                     // Cancel conversion, go back to kana
                     cancelConversion(ic)
                 } else if (composingText.isNotEmpty()) {
-                    composingText = composingText.dropLast(1)
+                    // Remove one kana unit worth of romaji
+                    composingText = removeLastKanaUnit(composingText)
                     if (composingText.isEmpty()) {
                         ic.finishComposingText()
                         clearCandidates()
@@ -122,7 +125,17 @@ class InputEngine(private val service: NacreInputMethodService) {
                 } else if (composingText.isNotEmpty()) {
                     finishComposing(ic)
                 } else {
-                    sendKeyEvent(KeyEvent.KEYCODE_ENTER)
+                    // Use performEditorAction for Search/Send/Go fields
+                    val imeAction = editorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
+                    if (imeAction == EditorInfo.IME_ACTION_SEARCH ||
+                        imeAction == EditorInfo.IME_ACTION_SEND ||
+                        imeAction == EditorInfo.IME_ACTION_GO ||
+                        imeAction == EditorInfo.IME_ACTION_DONE
+                    ) {
+                        ic.performEditorAction(imeAction)
+                    } else {
+                        sendKeyEvent(KeyEvent.KEYCODE_ENTER)
+                    }
                 }
             }
 
@@ -288,6 +301,26 @@ class InputEngine(private val service: NacreInputMethodService) {
         candidates.clear()
         selectedCandidateIndex = -1
         isConverting = false
+    }
+
+    /**
+     * Remove the last kana unit from romaji composing text.
+     * E.g. "kyo" → "" (きょ is one unit), "ka" → "" (か is one unit),
+     * "kak" → "ka" (trailing consonant), "kakiko" → "kaki" (remove こ)
+     */
+    private fun removeLastKanaUnit(romaji: String): String {
+        if (romaji.isEmpty()) return ""
+        // Try progressively longer suffixes to find one that converts to kana
+        for (len in minOf(4, romaji.length) downTo 1) {
+            val suffix = romaji.substring(romaji.length - len)
+            val kana = japaneseEngine.romajiToHiragana(suffix)
+            // If the suffix fully converted (no leftover romaji), it's a kana unit
+            if (kana.isNotEmpty() && kana.all { it.code > 0x3000 }) {
+                return romaji.substring(0, romaji.length - len)
+            }
+        }
+        // Fallback: just drop last char
+        return romaji.dropLast(1)
     }
 
     private fun commitText(text: String) {

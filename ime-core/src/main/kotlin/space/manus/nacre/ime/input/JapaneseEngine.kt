@@ -100,7 +100,7 @@ class JapaneseEngine {
             // R-row
             "ra" to "ら", "ri" to "り", "ru" to "る", "re" to "れ", "ro" to "ろ",
             // W-row
-            "wa" to "わ", "wi" to "ゐ", "we" to "ゑ", "wo" to "を",
+            "wa" to "わ", "wi" to "うぃ", "we" to "うぇ", "wo" to "を",
             // G-row (dakuten)
             "ga" to "が", "gi" to "ぎ", "gu" to "ぐ", "ge" to "げ", "go" to "ご",
             // Z-row
@@ -137,6 +137,13 @@ class JapaneseEngine {
             "xa" to "ぁ", "xi" to "ぃ", "xu" to "ぅ", "xe" to "ぇ", "xo" to "ぉ",
             "xya" to "ゃ", "xyu" to "ゅ", "xyo" to "ょ",
             "xtu" to "っ", "xtsu" to "っ",
+            // l* variants (same as x* — common alternative)
+            "la" to "ぁ", "li" to "ぃ", "lu" to "ぅ", "le" to "ぇ", "lo" to "ぉ",
+            "lya" to "ゃ", "lyu" to "ゅ", "lyo" to "ょ",
+            "ltu" to "っ", "ltsu" to "っ",
+            // Additional yōon variants
+            "zya" to "じゃ", "zyu" to "じゅ", "zyo" to "じょ",
+            "dya" to "ぢゃ", "dyu" to "ぢゅ", "dyo" to "ぢょ",
             // Punctuation
             "-" to "ー",
         )

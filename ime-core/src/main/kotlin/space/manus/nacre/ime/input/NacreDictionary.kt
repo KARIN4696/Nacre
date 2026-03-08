@@ -1,8 +1,10 @@
 package space.manus.nacre.ime.input
 
 import android.content.Context
+import android.util.Log
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Nacre Japanese Dictionary.
@@ -28,10 +30,12 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     // Sorted readings for prefix search
     private var sortedReadings: Array<String> = emptyArray()
 
-    // User learning: boost for selected candidates
-    private val userBoost = HashMap<String, Int>(1000) // "reading:surface" → boost
+    // User learning: boost for selected candidates (thread-safe)
+    private val userBoost = ConcurrentHashMap<String, Int>(1000)
 
     private var loaded = false
+    private var savePending = false
+    private var lastSaveTime = 0L
 
     data class DictEntry(
         val surface: String,
@@ -51,14 +55,17 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                             val reading = parts[0]
                             val surface = parts[1]
                             val cost = parts[2].toIntOrNull() ?: 10000
-                            dict.getOrPut(reading) { mutableListOf() }
-                                .add(DictEntry(surface, cost))
+                            // Skip very high-cost entries to save memory
+                            if (cost <= 15000) {
+                                dict.getOrPut(reading) { mutableListOf() }
+                                    .add(DictEntry(surface, cost))
+                            }
                         }
                     }
                 }
             }
         } catch (e: Exception) {
-            // Dictionary file not found — fall back to no conversion
+            Log.e("NacreDictionary", "Failed to load dictionary", e)
         }
 
         // Sort entries by cost within each reading
@@ -104,7 +111,25 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     override fun recordSelection(candidate: ConversionCandidate) {
         val key = "${candidate.reading}:${candidate.surface}"
         userBoost[key] = (userBoost[key] ?: 0) + 1
-        saveUserBoost()
+        debouncedSave()
+    }
+
+    private fun debouncedSave() {
+        val now = System.currentTimeMillis()
+        if (now - lastSaveTime > 5000) {
+            lastSaveTime = now
+            saveUserBoost()
+        } else {
+            savePending = true
+        }
+    }
+
+    /** Call from onDestroy to flush pending saves. */
+    fun flushPendingSave() {
+        if (savePending) {
+            saveUserBoost()
+            savePending = false
+        }
     }
 
     // --- Internal ---
@@ -117,7 +142,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 ConversionCandidate(
                     surface = entry.surface,
                     reading = kana,
-                    cost = entry.cost - boost * 500,
+                    cost = maxOf(0, entry.cost - boost * 500),
                 )
             }
             .sortedBy { it.cost }
@@ -192,7 +217,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                     // Use the best entry for this segment
                     val bestEntry = entries.first()
                     val boost = userBoost["$segment:${bestEntry.surface}"] ?: 0
-                    val segCost = bestEntry.cost - boost * 500
+                    val segCost = maxOf(0, bestEntry.cost - boost * 500)
                     val totalCost = prevNode.cost + segCost
 
                     val current = dp[endPos]
@@ -263,7 +288,9 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                     userBoost[parts[0]] = parts[1].toIntOrNull() ?: 0
                 }
             }
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            Log.w("NacreDictionary", "Failed to load user boost", e)
+        }
     }
 
     private fun saveUserBoost() {
@@ -274,6 +301,8 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 .take(5000)
                 .joinToString("\n") { "${it.key}\t${it.value}" }
             prefs.edit().putString("boost", data).apply()
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            Log.w("NacreDictionary", "Failed to save user boost", e)
+        }
     }
 }

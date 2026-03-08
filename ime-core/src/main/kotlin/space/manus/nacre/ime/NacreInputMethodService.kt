@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class NacreInputMethodService :
     InputMethodService(),
@@ -53,11 +54,13 @@ class NacreInputMethodService :
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         inputEngine = InputEngine(this)
 
-        // Load dictionary in background
+        // Load dictionary in background, publish on Main
         serviceScope.launch(Dispatchers.IO) {
             val dict = NacreDictionary(this@NacreInputMethodService)
             dict.load()
-            inputEngine.dictionary = dict
+            withContext(Dispatchers.Main) {
+                inputEngine.dictionary = dict
+            }
         }
     }
 
@@ -67,8 +70,6 @@ class NacreInputMethodService :
             (existing.parent as? ViewGroup)?.removeView(existing)
             return existing
         }
-
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
 
         val view = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@NacreInputMethodService)
@@ -89,6 +90,7 @@ class NacreInputMethodService :
 
     override fun onWindowShown() {
         super.onWindowShown()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
 
@@ -100,6 +102,7 @@ class NacreInputMethodService :
     override fun onEvaluateFullscreenMode(): Boolean = false
 
     override fun onDestroy() {
+        (inputEngine.dictionary as? NacreDictionary)?.flushPendingSave()
         serviceScope.cancel()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

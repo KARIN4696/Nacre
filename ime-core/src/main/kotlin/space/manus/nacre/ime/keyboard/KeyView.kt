@@ -129,11 +129,11 @@ fun KeyView(
                             service.inputEngine.processSwipe(keyDef, direction)
                         }
                         holdDuration >= 350L -> {
-                            // Long press
+                            // Long press — route through InputEngine
                             if (keyDef.action is KeyAction.Fn) {
                                 service.inputEngine.processAction(KeyAction.Escape)
                             } else if (keyDef.longPress != null) {
-                                service.currentInputConnection?.commitText(keyDef.longPress, 1)
+                                service.inputEngine.processAction(KeyAction.Text(keyDef.longPress!!))
                             }
                         }
                         else -> {
