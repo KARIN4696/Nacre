@@ -166,12 +166,15 @@ class NacreInputMethodService :
 
     override fun onWindowHidden() {
         super.onWindowHidden()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        // Use ON_PAUSE instead of ON_STOP to keep ComposeView's composition alive.
+        // ON_STOP would dispose the composition, making the cached ComposeView unusable.
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // Recreate ComposeView on configuration change (theme, density, screen size)
+        // Detach and discard old ComposeView so it's recreated on next onCreateInputView()
+        (composeView?.parent as? ViewGroup)?.removeView(composeView)
         composeView = null
     }
 
@@ -185,13 +188,13 @@ class NacreInputMethodService :
         snippetEngine.saveSnippets(this)
         autoConvertEngine.saveRules(this)
         feedbackManager.release()
-        serviceScope.cancel()
         if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         composeView = null
+        serviceScope.cancel()
         super.onDestroy()
     }
 }

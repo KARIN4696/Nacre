@@ -20,12 +20,8 @@
 -keep class * implements androidx.lifecycle.ViewModelStoreOwner { *; }
 -keep class * implements androidx.savedstate.SavedStateRegistryOwner { *; }
 
-# Compose — do not strip or rename
--keep class androidx.compose.** { *; }
+# Compose (BOM already bundles its own rules, just suppress warnings)
 -dontwarn androidx.compose.**
-
-# Lifecycle
--keep class androidx.lifecycle.** { *; }
 
 # Kotlin
 -dontwarn kotlin.**
