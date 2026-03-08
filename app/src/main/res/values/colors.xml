@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#1A1A2E</color>
+    <color name="nacre_accent">#00D4AA</color>
+    <color name="nacre_surface">#16213E</color>
+    <color name="nacre_key_bg">#2A2A4A</color>
+    <color name="nacre_key_pressed">#3A3A5A</color>
+    <color name="nacre_text">#E0E0E0</color>
+</resources>
