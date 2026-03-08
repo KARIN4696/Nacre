@@ -244,7 +244,7 @@ private fun buildCommandList(
         items.add(
             CommandItem(
                 name = macro.name,
-                trigger = macro.trigger,
+                trigger = macro.trigger ?: "",
                 type = CommandType.Macro,
                 action = {
                     val ic = service.currentInputConnection
@@ -264,7 +264,7 @@ private fun buildCommandList(
         items.add(
             CommandItem(
                 name = snippet.name,
-                trigger = snippet.trigger,
+                trigger = snippet.trigger ?: "",
                 type = CommandType.Snippet,
                 action = {
                     val ic = service.currentInputConnection

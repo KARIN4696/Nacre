@@ -41,7 +41,7 @@ private val VoiceButtonText = Color(0xFF0A0A1A)
  */
 @Composable
 fun QuickInputPad(service: NacreInputMethodService) {
-    val macroEngine = remember { MacroEngine() }
+    val macroEngine = service.macroEngine
     val macros = macroEngine.macros
     val coroutineScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
