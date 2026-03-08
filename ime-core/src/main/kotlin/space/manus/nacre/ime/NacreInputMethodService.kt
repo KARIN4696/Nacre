@@ -5,14 +5,19 @@ import android.inputmethodservice.InputMethodService
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
+import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import space.manus.nacre.config.ConfigRepository
 import space.manus.nacre.ime.feedback.FeedbackManager
 import space.manus.nacre.ime.foldable.FoldableDetector
@@ -49,7 +54,7 @@ class NacreInputMethodService :
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
 
-    private var composeView: ComposeView? = null
+    private var inputViewContainer: FrameLayout? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     // --- Core components ---
@@ -108,8 +113,8 @@ class NacreInputMethodService :
     }
 
     override fun onCreateInputView(): View {
-        // Cache ComposeView — don't recreate every time
-        composeView?.let { existing ->
+        // Cache — don't recreate every time
+        inputViewContainer?.let { existing ->
             (existing.parent as? ViewGroup)?.removeView(existing)
             return existing
         }
@@ -123,12 +128,45 @@ class NacreInputMethodService :
         }
 
         return try {
-            val view = NacreComposeView(this, this@NacreInputMethodService)
-            view.setContent {
-                KeyboardScreen(service = this@NacreInputMethodService)
+            // Wrap ComposeView in a FrameLayout that sets ViewTree owners
+            // on the parent chain when attached. ComposeView is final and
+            // can't be subclassed. The system's parentPanel LinearLayout
+            // doesn't have ViewTreeLifecycleOwner, so we must set it on
+            // every ancestor before ComposeView tries to resolve it.
+            val container = object : FrameLayout(this) {
+                override fun onAttachedToWindow() {
+                    var p = parent
+                    while (p is View) {
+                        p.setViewTreeLifecycleOwner(this@NacreInputMethodService)
+                        p.setViewTreeViewModelStoreOwner(this@NacreInputMethodService)
+                        p.setViewTreeSavedStateRegistryOwner(this@NacreInputMethodService)
+                        p = p.parent
+                    }
+                    super.onAttachedToWindow()
+                }
             }
-            composeView = view
-            view
+            container.setViewTreeLifecycleOwner(this)
+            container.setViewTreeViewModelStoreOwner(this)
+            container.setViewTreeSavedStateRegistryOwner(this)
+
+            val composeView = ComposeView(this).apply {
+                setViewTreeLifecycleOwner(this@NacreInputMethodService)
+                setViewTreeViewModelStoreOwner(this@NacreInputMethodService)
+                setViewTreeSavedStateRegistryOwner(this@NacreInputMethodService)
+                setContent {
+                    KeyboardScreen(service = this@NacreInputMethodService)
+                }
+            }
+            container.addView(
+                composeView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+
+            inputViewContainer = container
+            container
         } catch (e: Exception) {
             Log.e("NacreIME", "Failed to create input view", e)
             android.widget.TextView(this).apply {
@@ -156,16 +194,13 @@ class NacreInputMethodService :
 
     override fun onWindowHidden() {
         super.onWindowHidden()
-        // Use ON_PAUSE instead of ON_STOP to keep ComposeView's composition alive.
-        // ON_STOP would dispose the composition, making the cached ComposeView unusable.
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // Detach and discard old ComposeView so it's recreated on next onCreateInputView()
-        (composeView?.parent as? ViewGroup)?.removeView(composeView)
-        composeView = null
+        (inputViewContainer?.parent as? ViewGroup)?.removeView(inputViewContainer)
+        inputViewContainer = null
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -183,7 +218,7 @@ class NacreInputMethodService :
         }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
-        composeView = null
+        inputViewContainer = null
         serviceScope.cancel()
         super.onDestroy()
     }
