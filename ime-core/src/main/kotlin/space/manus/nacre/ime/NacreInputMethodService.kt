@@ -5,18 +5,14 @@ import android.inputmethodservice.InputMethodService
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.setViewTreeLifecycleOwner
-import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import space.manus.nacre.config.ConfigRepository
 import space.manus.nacre.ime.feedback.FeedbackManager
 import space.manus.nacre.ime.foldable.FoldableDetector
@@ -126,24 +122,10 @@ class NacreInputMethodService :
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         }
 
-        // Set ViewTree owners on the IME window's decor view so that
-        // ComposeView can find them when attached to the parent hierarchy.
-        // Without this, ComposeView throws IllegalStateException:
-        // "ViewTreeLifecycleOwner not found from android.widget.LinearLayout"
-        window?.window?.decorView?.let { decorView ->
-            decorView.setViewTreeLifecycleOwner(this)
-            decorView.setViewTreeViewModelStoreOwner(this)
-            decorView.setViewTreeSavedStateRegistryOwner(this)
-        }
-
         return try {
-            val view = ComposeView(this).apply {
-                setViewTreeLifecycleOwner(this@NacreInputMethodService)
-                setViewTreeViewModelStoreOwner(this@NacreInputMethodService)
-                setViewTreeSavedStateRegistryOwner(this@NacreInputMethodService)
-                setContent {
-                    KeyboardScreen(service = this@NacreInputMethodService)
-                }
+            val view = NacreComposeView(this, this@NacreInputMethodService)
+            view.setContent {
+                KeyboardScreen(service = this@NacreInputMethodService)
             }
             composeView = view
             view
