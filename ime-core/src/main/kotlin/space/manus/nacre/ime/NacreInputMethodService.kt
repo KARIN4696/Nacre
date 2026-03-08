@@ -18,7 +18,12 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import space.manus.nacre.ime.input.InputEngine
 import space.manus.nacre.ime.input.LayerManager
+import space.manus.nacre.ime.input.NacreDictionary
 import space.manus.nacre.ime.keyboard.KeyboardScreen
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class NacreInputMethodService :
     InputMethodService(),
@@ -36,6 +41,7 @@ class NacreInputMethodService :
         get() = savedStateRegistryController.savedStateRegistry
 
     private var composeView: ComposeView? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     lateinit var inputEngine: InputEngine
         private set
     val layerManager = LayerManager()
@@ -45,6 +51,13 @@ class NacreInputMethodService :
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         inputEngine = InputEngine(this)
+
+        // Load dictionary in background
+        serviceScope.launch(Dispatchers.IO) {
+            val dict = NacreDictionary(this@NacreInputMethodService)
+            dict.load()
+            inputEngine.dictionary = dict
+        }
     }
 
     override fun onCreateInputView(): View {

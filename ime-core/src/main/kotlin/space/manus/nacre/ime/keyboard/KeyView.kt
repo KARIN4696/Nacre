@@ -13,10 +13,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,6 +67,21 @@ fun KeyView(
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
+            .semantics {
+                contentDescription = when (keyDef.action) {
+                    is KeyAction.Backspace -> "Backspace"
+                    is KeyAction.Enter -> "Enter"
+                    is KeyAction.Space -> "Space"
+                    is KeyAction.Tab -> "Tab"
+                    is KeyAction.Escape -> "Escape"
+                    is KeyAction.Fn -> "Function"
+                    is KeyAction.FnPage2 -> "Function page 2"
+                    is KeyAction.SwitchIme -> "Switch keyboard"
+                    is KeyAction.Shift -> "Shift"
+                    is KeyAction.ToggleJapanese -> "Toggle Japanese"
+                    else -> keyDef.label
+                }
+            }
             .pointerInput(keyDef) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)

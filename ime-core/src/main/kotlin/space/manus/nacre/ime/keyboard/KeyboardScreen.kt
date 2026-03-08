@@ -27,39 +27,36 @@ fun KeyboardScreen(service: NacreInputMethodService) {
             .background(KeyboardBackground)
             .padding(horizontal = 4.dp, vertical = 2.dp),
     ) {
-        // Layer indicator
-        if (layerManager.currentLayer != Layer.Base) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Text(
-                    text = when (layerManager.currentLayer) {
-                        Layer.Fn1 -> "Fn"
-                        Layer.Fn2 -> "Fn2"
-                        else -> ""
-                    },
-                    color = LayerIndicatorColor,
-                    fontSize = 10.sp,
-                )
-            }
-        }
+        // Candidate bar (prediction/conversion)
+        CandidateBar(service = service)
 
-        // Japanese mode indicator
-        if (layerManager.isJapanese) {
+        // Status bar: layer + Japanese mode indicators
+        val showLayer = layerManager.currentLayer != Layer.Base
+        val showJa = layerManager.isJapanese
+
+        if (showLayer || showJa) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.Start,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
-                    text = "あ",
-                    color = LayerIndicatorColor,
-                    fontSize = 10.sp,
-                )
+                if (showJa) {
+                    Text(text = "あ", color = LayerIndicatorColor, fontSize = 10.sp)
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
+                if (showLayer) {
+                    Text(
+                        text = when (layerManager.currentLayer) {
+                            Layer.Fn1 -> "Fn"
+                            Layer.Fn2 -> "Fn2"
+                            else -> ""
+                        },
+                        color = LayerIndicatorColor,
+                        fontSize = 10.sp,
+                    )
+                }
             }
         }
 
@@ -68,17 +65,13 @@ fun KeyboardScreen(service: NacreInputMethodService) {
 
         for ((rowIndex, row) in rows.withIndex()) {
             if (rowIndex == 2 || rowIndex == 3) {
-                // Rows 3 and 4 have trackball between left and right halves
                 KeyRowWithTrackball(
                     keys = row,
                     service = service,
                     showTrackball = rowIndex == 2,
                 )
             } else {
-                KeyRow(
-                    keys = row,
-                    service = service,
-                )
+                KeyRow(keys = row, service = service)
             }
         }
     }
@@ -123,7 +116,6 @@ fun KeyRowWithTrackball(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Left half
         Row(modifier = Modifier.weight(1f)) {
             for (keyDef in leftKeys) {
                 KeyView(
@@ -134,17 +126,12 @@ fun KeyRowWithTrackball(
             }
         }
 
-        // Trackball (center)
         if (showTrackball) {
-            TrackballView(
-                service = service,
-                modifier = Modifier.size(60.dp),
-            )
+            TrackballView(service = service, modifier = Modifier.size(60.dp))
         } else {
             Spacer(modifier = Modifier.width(60.dp))
         }
 
-        // Right half
         Row(modifier = Modifier.weight(1f)) {
             for (keyDef in rightKeys) {
                 KeyView(

@@ -4,6 +4,11 @@ import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
+import android.text.InputType
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import space.manus.nacre.config.KeyAction
 import space.manus.nacre.config.KeyDef
 import space.manus.nacre.ime.NacreInputMethodService
@@ -14,10 +19,43 @@ class InputEngine(private val service: NacreInputMethodService) {
     private val japaneseEngine = JapaneseEngine()
     private var composingText: String = ""
 
+    // Conversion state (observable by Compose)
+    var candidates = mutableStateListOf<ConversionCandidate>()
+        private set
+    var selectedCandidateIndex by mutableStateOf(-1)
+        private set
+    var isConverting by mutableStateOf(false)
+        private set
+
+    // Dictionary reference (set by service after loading)
+    var dictionary: DictionaryProvider? = null
+
     fun onStartInput(info: EditorInfo?) {
         editorInfo = info
         composingText = ""
         japaneseEngine.reset()
+        clearCandidates()
+
+        // EditorInfo handling: disable Japanese for password/number fields
+        if (info != null) {
+            val inputType = info.inputType and InputType.TYPE_MASK_CLASS
+            val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+
+            val isPassword = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+            val isNumber = inputType == InputType.TYPE_CLASS_NUMBER ||
+                inputType == InputType.TYPE_CLASS_PHONE
+            val isEmail = variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+                variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+            val isUri = variation == InputType.TYPE_TEXT_VARIATION_URI
+
+            if (isPassword || isNumber || isEmail || isUri) {
+                if (service.layerManager.isJapanese) {
+                    service.layerManager.toggleJapanese()
+                }
+            }
+        }
     }
 
     fun processKey(keyDef: KeyDef) {
@@ -39,8 +77,11 @@ class InputEngine(private val service: NacreInputMethodService) {
 
         when (action) {
             is KeyAction.Text -> {
+                if (isConverting) {
+                    // If we're showing candidates, commit selected and start fresh
+                    commitSelectedCandidate(ic)
+                }
                 if (service.layerManager.isJapanese) {
-                    // Japanese mode: always lowercase for romaji
                     processJapaneseInput(action.text.lowercase(), ic)
                 } else {
                     val text = if (service.layerManager.isShifted) {
@@ -49,7 +90,6 @@ class InputEngine(private val service: NacreInputMethodService) {
                         action.text
                     }
                     commitText(text)
-                    // Auto-unshift after one character (single-shot shift)
                     if (service.layerManager.isShifted) {
                         service.layerManager.toggleShift()
                     }
@@ -57,13 +97,18 @@ class InputEngine(private val service: NacreInputMethodService) {
             }
 
             is KeyAction.Backspace -> {
-                if (composingText.isNotEmpty()) {
+                if (isConverting) {
+                    // Cancel conversion, go back to kana
+                    cancelConversion(ic)
+                } else if (composingText.isNotEmpty()) {
                     composingText = composingText.dropLast(1)
                     if (composingText.isEmpty()) {
                         ic.finishComposingText()
+                        clearCandidates()
                     } else {
                         val kana = japaneseEngine.romajiToHiragana(composingText)
                         ic.setComposingText(kana, 1)
+                        updatePredictions(kana)
                     }
                 } else {
                     ic.deleteSurroundingText(1, 0)
@@ -71,7 +116,9 @@ class InputEngine(private val service: NacreInputMethodService) {
             }
 
             is KeyAction.Enter -> {
-                if (composingText.isNotEmpty()) {
+                if (isConverting) {
+                    commitSelectedCandidate(ic)
+                } else if (composingText.isNotEmpty()) {
                     finishComposing(ic)
                 } else {
                     sendKeyEvent(KeyEvent.KEYCODE_ENTER)
@@ -80,15 +127,30 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             is KeyAction.Space -> {
                 if (composingText.isNotEmpty()) {
-                    // TODO: Trigger Mozc conversion for kanji candidates
-                    finishComposing(ic)
+                    if (isConverting) {
+                        // Cycle to next candidate
+                        nextCandidate(ic)
+                    } else {
+                        // Start conversion
+                        startConversion(ic)
+                    }
                 } else {
                     commitText(" ")
                 }
             }
 
             is KeyAction.Tab -> sendKeyEvent(KeyEvent.KEYCODE_TAB)
-            is KeyAction.Escape -> sendKeyEvent(KeyEvent.KEYCODE_ESCAPE)
+            is KeyAction.Escape -> {
+                if (isConverting) {
+                    cancelConversion(ic)
+                } else if (composingText.isNotEmpty()) {
+                    composingText = ""
+                    ic.finishComposingText()
+                    clearCandidates()
+                } else {
+                    sendKeyEvent(KeyEvent.KEYCODE_ESCAPE)
+                }
+            }
 
             is KeyAction.Shift -> service.layerManager.toggleShift()
             is KeyAction.Fn -> service.layerManager.toggleFn()
@@ -100,9 +162,8 @@ class InputEngine(private val service: NacreInputMethodService) {
             }
 
             is KeyAction.ToggleJapanese -> {
-                if (composingText.isNotEmpty()) {
-                    finishComposing(ic)
-                }
+                if (isConverting) commitSelectedCandidate(ic)
+                if (composingText.isNotEmpty()) finishComposing(ic)
                 japaneseEngine.reset()
                 service.layerManager.toggleJapanese()
             }
@@ -111,18 +172,10 @@ class InputEngine(private val service: NacreInputMethodService) {
                 if (action.ctrl) {
                     val now = System.currentTimeMillis()
                     ic.sendKeyEvent(
-                        KeyEvent(
-                            now, now,
-                            KeyEvent.ACTION_DOWN, action.code,
-                            0, KeyEvent.META_CTRL_ON,
-                        ),
+                        KeyEvent(now, now, KeyEvent.ACTION_DOWN, action.code, 0, KeyEvent.META_CTRL_ON),
                     )
                     ic.sendKeyEvent(
-                        KeyEvent(
-                            now, now,
-                            KeyEvent.ACTION_UP, action.code,
-                            0, KeyEvent.META_CTRL_ON,
-                        ),
+                        KeyEvent(now, now, KeyEvent.ACTION_UP, action.code, 0, KeyEvent.META_CTRL_ON),
                     )
                 } else {
                     sendKeyEvent(action.code)
@@ -131,10 +184,95 @@ class InputEngine(private val service: NacreInputMethodService) {
         }
     }
 
+    // --- Candidate selection from UI ---
+
+    fun selectCandidate(index: Int) {
+        val ic = service.currentInputConnection ?: return
+        if (index in candidates.indices) {
+            selectedCandidateIndex = index
+            ic.setComposingText(candidates[index].surface, 1)
+        }
+    }
+
+    fun commitCandidate(index: Int) {
+        val ic = service.currentInputConnection ?: return
+        if (index in candidates.indices) {
+            val candidate = candidates[index]
+            ic.commitText(candidate.surface, 1)
+            dictionary?.recordSelection(candidate)
+            composingText = ""
+            japaneseEngine.reset()
+            clearCandidates()
+        }
+    }
+
+    // --- Japanese conversion ---
+
     private fun processJapaneseInput(text: String, ic: InputConnection) {
         composingText += text
         val kana = japaneseEngine.romajiToHiragana(composingText)
         ic.setComposingText(kana, 1)
+        updatePredictions(kana)
+    }
+
+    private fun startConversion(ic: InputConnection) {
+        val kana = japaneseEngine.romajiToHiragana(composingText)
+        val dict = dictionary
+        if (dict != null) {
+            val results = dict.convert(kana)
+            if (results.isNotEmpty()) {
+                candidates.clear()
+                candidates.addAll(results)
+                selectedCandidateIndex = 0
+                isConverting = true
+                ic.setComposingText(results[0].surface, 1)
+                return
+            }
+        }
+        // No dictionary or no results: commit as kana
+        finishComposing(ic)
+    }
+
+    private fun nextCandidate(ic: InputConnection) {
+        if (candidates.isEmpty()) return
+        selectedCandidateIndex = (selectedCandidateIndex + 1) % candidates.size
+        ic.setComposingText(candidates[selectedCandidateIndex].surface, 1)
+    }
+
+    private fun commitSelectedCandidate(ic: InputConnection) {
+        if (candidates.isNotEmpty() && selectedCandidateIndex in candidates.indices) {
+            val candidate = candidates[selectedCandidateIndex]
+            ic.commitText(candidate.surface, 1)
+            dictionary?.recordSelection(candidate)
+        } else {
+            val kana = japaneseEngine.romajiToHiragana(composingText)
+            ic.commitText(kana, 1)
+        }
+        composingText = ""
+        japaneseEngine.reset()
+        clearCandidates()
+    }
+
+    private fun cancelConversion(ic: InputConnection) {
+        val kana = japaneseEngine.romajiToHiragana(composingText)
+        ic.setComposingText(kana, 1)
+        isConverting = false
+        selectedCandidateIndex = -1
+        // Keep prediction candidates but not conversion candidates
+        updatePredictions(kana)
+    }
+
+    private fun updatePredictions(kana: String) {
+        val dict = dictionary ?: return
+        if (kana.isEmpty()) {
+            clearCandidates()
+            return
+        }
+        val predictions = dict.predict(kana)
+        candidates.clear()
+        candidates.addAll(predictions)
+        isConverting = false
+        selectedCandidateIndex = -1
     }
 
     private fun finishComposing(ic: InputConnection) {
@@ -142,6 +280,13 @@ class InputEngine(private val service: NacreInputMethodService) {
         ic.commitText(kana, 1)
         composingText = ""
         japaneseEngine.reset()
+        clearCandidates()
+    }
+
+    private fun clearCandidates() {
+        candidates.clear()
+        selectedCandidateIndex = -1
+        isConverting = false
     }
 
     private fun commitText(text: String) {
@@ -166,7 +311,6 @@ class InputEngine(private val service: NacreInputMethodService) {
                 sendKeyEvent(if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
             }
         } else {
-            // Regular apps: horizontal movement via setSelection
             if (dx != 0) {
                 val extracted = ic.getExtractedText(ExtractedTextRequest(), 0) ?: return
                 val text = extracted.text?.toString() ?: return
@@ -175,7 +319,6 @@ class InputEngine(private val service: NacreInputMethodService) {
                 val newPos = (pos + dx).coerceIn(0, text.length)
                 ic.setSelection(newPos, newPos)
             }
-            // Vertical movement: use DPAD for non-terminal apps too
             if (dy != 0) {
                 repeat(kotlin.math.abs(dy)) {
                     sendKeyEvent(if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
@@ -191,3 +334,15 @@ class InputEngine(private val service: NacreInputMethodService) {
 }
 
 enum class SwipeDirection { Up, Down, Left, Right }
+
+data class ConversionCandidate(
+    val surface: String,
+    val reading: String,
+    val cost: Int = 0,
+)
+
+interface DictionaryProvider {
+    fun convert(kana: String): List<ConversionCandidate>
+    fun predict(kana: String): List<ConversionCandidate>
+    fun recordSelection(candidate: ConversionCandidate)
+}
