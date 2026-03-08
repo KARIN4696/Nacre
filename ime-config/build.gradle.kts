@@ -23,5 +23,4 @@ android {
 
 dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }

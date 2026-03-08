@@ -2,6 +2,7 @@ package space.manus.nacre.ime
 
 import android.inputmethodservice.InputMethodService
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
@@ -25,7 +26,6 @@ class NacreInputMethodService :
     ViewModelStoreOwner,
     SavedStateRegistryOwner {
 
-    // Lifecycle support for Compose in InputMethodService (Thumb-Key pattern)
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val store = ViewModelStore()
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
@@ -48,7 +48,13 @@ class NacreInputMethodService :
     }
 
     override fun onCreateInputView(): View {
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        // Cache ComposeView — don't recreate every time
+        composeView?.let { existing ->
+            (existing.parent as? ViewGroup)?.removeView(existing)
+            return existing
+        }
+
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
 
         val view = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@NacreInputMethodService)
@@ -67,15 +73,23 @@ class NacreInputMethodService :
         inputEngine.onStartInput(info)
     }
 
-    override fun onFinishInputView(finishingInput: Boolean) {
-        super.onFinishInputView(finishingInput)
+    override fun onWindowShown() {
+        super.onWindowShown()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+
+    override fun onWindowHidden() {
+        super.onWindowHidden()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
 
     override fun onDestroy() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
+        composeView = null
         super.onDestroy()
     }
 }

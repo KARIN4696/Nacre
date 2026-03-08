@@ -2,6 +2,7 @@ package space.manus.nacre.ime.input
 
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import space.manus.nacre.config.KeyAction
 import space.manus.nacre.config.KeyDef
@@ -11,8 +12,6 @@ class InputEngine(private val service: NacreInputMethodService) {
 
     private var editorInfo: EditorInfo? = null
     private val japaneseEngine = JapaneseEngine()
-
-    // Composing buffer for Japanese input
     private var composingText: String = ""
 
     fun onStartInput(info: EditorInfo?) {
@@ -40,15 +39,20 @@ class InputEngine(private val service: NacreInputMethodService) {
 
         when (action) {
             is KeyAction.Text -> {
-                val text = if (service.layerManager.isShifted) {
-                    action.text.uppercase()
-                } else {
-                    action.text
-                }
                 if (service.layerManager.isJapanese) {
-                    processJapaneseInput(text, ic)
+                    // Japanese mode: always lowercase for romaji
+                    processJapaneseInput(action.text.lowercase(), ic)
                 } else {
+                    val text = if (service.layerManager.isShifted) {
+                        action.text.uppercase()
+                    } else {
+                        action.text
+                    }
                     commitText(text)
+                    // Auto-unshift after one character (single-shot shift)
+                    if (service.layerManager.isShifted) {
+                        service.layerManager.toggleShift()
+                    }
                 }
             }
 
@@ -97,14 +101,14 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             is KeyAction.ToggleJapanese -> {
                 if (composingText.isNotEmpty()) {
-                    finishComposing(service.currentInputConnection ?: return)
+                    finishComposing(ic)
                 }
+                japaneseEngine.reset()
                 service.layerManager.toggleJapanese()
             }
 
             is KeyAction.KeyCode -> {
                 if (action.ctrl) {
-                    // Send Ctrl+key combination
                     val now = System.currentTimeMillis()
                     ic.sendKeyEvent(
                         KeyEvent(
@@ -154,29 +158,34 @@ class InputEngine(private val service: NacreInputMethodService) {
         val ic = service.currentInputConnection ?: return
         val ei = editorInfo
 
-        // For terminal apps (Termux), use DPAD key events
         if (isTerminalApp(ei)) {
             repeat(kotlin.math.abs(dx)) {
-                val code = if (dx > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
-                sendKeyEvent(code)
+                sendKeyEvent(if (dx > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
             }
             repeat(kotlin.math.abs(dy)) {
-                val code = if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP
-                sendKeyEvent(code)
+                sendKeyEvent(if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
             }
         } else {
-            // For regular apps, use setSelection
-            val extracted = ic.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)
-            if (extracted != null) {
-                val newPos = (extracted.selectionStart + dx).coerceIn(0, extracted.text.length)
+            // Regular apps: horizontal movement via setSelection
+            if (dx != 0) {
+                val extracted = ic.getExtractedText(ExtractedTextRequest(), 0) ?: return
+                val text = extracted.text?.toString() ?: return
+                val pos = extracted.selectionStart
+                if (pos < 0) return
+                val newPos = (pos + dx).coerceIn(0, text.length)
                 ic.setSelection(newPos, newPos)
+            }
+            // Vertical movement: use DPAD for non-terminal apps too
+            if (dy != 0) {
+                repeat(kotlin.math.abs(dy)) {
+                    sendKeyEvent(if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
+                }
             }
         }
     }
 
     private fun isTerminalApp(info: EditorInfo?): Boolean {
-        if (info == null) return false
-        val pkg = info.packageName ?: return false
+        val pkg = info?.packageName ?: return false
         return pkg.contains("termux") || pkg.contains("terminal") || pkg.contains("connectbot")
     }
 }

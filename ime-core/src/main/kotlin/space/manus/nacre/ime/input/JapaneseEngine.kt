@@ -8,10 +8,8 @@ package space.manus.nacre.ime.input
  */
 class JapaneseEngine {
 
-    private var pending: String = ""
-
     fun reset() {
-        pending = ""
+        // Reserved for future stateful conversion
     }
 
     /**
@@ -33,8 +31,13 @@ class JapaneseEngine {
                 result.append(matched.kana)
                 i += matched.consumed
             } else {
+                // Handle n' → ん (forced)
+                if (lower[i] == 'n' && i + 1 < lower.length && lower[i + 1] == '\'') {
+                    result.append("ん")
+                    i += 2
+                }
                 // Handle "nn" → ん
-                if (i + 1 < lower.length && lower[i] == 'n' && lower[i + 1] == 'n') {
+                else if (i + 1 < lower.length && lower[i] == 'n' && lower[i + 1] == 'n') {
                     result.append("ん")
                     i += 2
                 }
@@ -124,6 +127,12 @@ class JapaneseEngine {
             "jya" to "じゃ", "jyu" to "じゅ", "jyo" to "じょ",
             "bya" to "びゃ", "byu" to "びゅ", "byo" to "びょ",
             "pya" to "ぴゃ", "pyu" to "ぴゅ", "pyo" to "ぴょ",
+            // Foreign sounds (カタカナ語用)
+            "fa" to "ふぁ", "fi" to "ふぃ", "fe" to "ふぇ", "fo" to "ふぉ",
+            "thi" to "てぃ", "dhi" to "でぃ",
+            "dhu" to "でゅ", "thu" to "てゅ",
+            "tsa" to "つぁ", "tsi" to "つぃ", "tse" to "つぇ", "tso" to "つぉ",
+            "va" to "ゔぁ", "vi" to "ゔぃ", "vu" to "ゔ", "ve" to "ゔぇ", "vo" to "ゔぉ",
             // Small kana
             "xa" to "ぁ", "xi" to "ぃ", "xu" to "ぅ", "xe" to "ぇ", "xo" to "ぉ",
             "xya" to "ゃ", "xyu" to "ゅ", "xyo" to "ょ",

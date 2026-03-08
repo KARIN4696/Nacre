@@ -2,8 +2,8 @@ package space.manus.nacre.ime.keyboard
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -13,7 +13,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -30,7 +32,6 @@ private val KeyBgFn = Color(0xFF1E3A5A)
 private val KeyBgAction = Color(0xFF00D4AA)
 private val KeyText = Color(0xFFE0E0E0)
 private val KeyTextSwipe = Color(0xFF6666AA)
-private val KeyTextAction = Color(0xFF0F0F23)
 
 @Composable
 fun KeyView(
@@ -40,7 +41,7 @@ fun KeyView(
 ) {
     var isPressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "keyScale")
-    val swipeThreshold = with(LocalDensity.current) { 12.dp.toPx() }
+    val swipeThresholdPx = with(LocalDensity.current) { 12.dp.toPx() }
 
     val isActionKey = keyDef.action is KeyAction.Backspace ||
         keyDef.action is KeyAction.Enter ||
@@ -58,10 +59,6 @@ fun KeyView(
 
     val textColor = if (isActionKey) KeyBgAction else KeyText
 
-    var dragOffsetX by remember { mutableFloatStateOf(0f) }
-    var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    var swiped by remember { mutableStateOf(false) }
-
     Box(
         modifier = modifier
             .height(52.dp)
@@ -70,50 +67,65 @@ fun KeyView(
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
             .pointerInput(keyDef) {
-                detectTapGestures(
-                    onPress = {
-                        isPressed = true
-                        try { awaitRelease() } finally { isPressed = false }
-                    },
-                    onTap = {
-                        if (!swiped) {
-                            service.inputEngine.processKey(keyDef)
-                        }
-                        swiped = false
-                    },
-                    onLongPress = {
-                        // Fn long press = Escape
-                        if (keyDef.action is KeyAction.Fn) {
-                            service.inputEngine.processAction(KeyAction.Escape)
-                        } else if (keyDef.longPress != null) {
-                            service.currentInputConnection?.commitText(keyDef.longPress, 1)
-                        }
-                    },
-                )
-            }
-            .pointerInput(keyDef) {
-                detectDragGestures(
-                    onDragStart = {
-                        dragOffsetX = 0f
-                        dragOffsetY = 0f
-                        swiped = false
-                    },
-                    onDrag = { _, dragAmount ->
-                        dragOffsetX += dragAmount.x
-                        dragOffsetY += dragAmount.y
-                    },
-                    onDragEnd = {
-                        if (abs(dragOffsetX) > swipeThreshold || abs(dragOffsetY) > swipeThreshold) {
-                            swiped = true
-                            val direction = if (abs(dragOffsetX) > abs(dragOffsetY)) {
-                                if (dragOffsetX > 0) SwipeDirection.Right else SwipeDirection.Left
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    val downTime = System.currentTimeMillis()
+
+                    var totalDragX = 0f
+                    var totalDragY = 0f
+                    var wasDragged = false
+
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+
+                            if (change.pressed) {
+                                val delta = change.positionChange()
+                                totalDragX += delta.x
+                                totalDragY += delta.y
+
+                                if (abs(totalDragX) > swipeThresholdPx ||
+                                    abs(totalDragY) > swipeThresholdPx
+                                ) {
+                                    wasDragged = true
+                                }
+                                change.consume()
                             } else {
-                                if (dragOffsetY > 0) SwipeDirection.Down else SwipeDirection.Up
+                                change.consume()
+                                break
+                            }
+                        }
+                    } finally {
+                        isPressed = false
+                    }
+
+                    val holdDuration = System.currentTimeMillis() - downTime
+
+                    when {
+                        wasDragged -> {
+                            val direction = if (abs(totalDragX) > abs(totalDragY)) {
+                                if (totalDragX > 0) SwipeDirection.Right else SwipeDirection.Left
+                            } else {
+                                if (totalDragY > 0) SwipeDirection.Down else SwipeDirection.Up
                             }
                             service.inputEngine.processSwipe(keyDef, direction)
                         }
-                    },
-                )
+                        holdDuration >= 350L -> {
+                            // Long press
+                            if (keyDef.action is KeyAction.Fn) {
+                                service.inputEngine.processAction(KeyAction.Escape)
+                            } else if (keyDef.longPress != null) {
+                                service.currentInputConnection?.commitText(keyDef.longPress, 1)
+                            }
+                        }
+                        else -> {
+                            // Tap
+                            service.inputEngine.processKey(keyDef)
+                        }
+                    }
+                }
             },
         contentAlignment = Alignment.Center,
     ) {
