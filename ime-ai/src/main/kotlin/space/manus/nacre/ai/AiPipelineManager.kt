@@ -6,26 +6,28 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.BatteryManager
 import android.os.IBinder
+import android.os.RemoteException
 import android.util.Log
 
 /**
  * AI Pipeline Manager.
  *
  * Orchestrates the voice input → LLM transformation pipeline.
- * Manages service connections to WhisperService and LlmService.
+ * Uses AIDL IPC to communicate with WhisperService and LlmService
+ * running in separate processes (:whisper / :llm) for JNI crash isolation.
  *
  * Workflow:
  * 1. User triggers voice input (trackball up-swipe)
  * 2. WhisperService transcribes speech to text
  * 3. Text inserted immediately (or optionally sent to LLM)
- * 4. User can request transformation: "英語にして", "敬語にして", "コードにして"
+ * 4. User can request transformation: "敬語にして", "カタカナにして"
  * 5. LlmService transforms text
  * 6. Result replaces the transcribed text
  */
 class AiPipelineManager(private val context: Context) {
 
-    private var whisperService: WhisperService? = null
-    private var llmService: LlmService? = null
+    private var whisperService: IWhisperService? = null
+    private var llmService: ILlmService? = null
     private var whisperBound = false
     private var llmBound = false
 
@@ -42,7 +44,6 @@ class AiPipelineManager(private val context: Context) {
         Listening,
         Transcribing,
         Transforming,
-        ModelLoading,
         Error,
     }
 
@@ -54,10 +55,10 @@ class AiPipelineManager(private val context: Context) {
 
     private val whisperConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            whisperService = (service as WhisperService.WhisperBinder).getService()
+            whisperService = IWhisperService.Stub.asInterface(service)
             whisperBound = true
             checkAvailability()
-            Log.d(TAG, "WhisperService connected")
+            Log.d(TAG, "WhisperService connected (AIDL)")
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -69,10 +70,10 @@ class AiPipelineManager(private val context: Context) {
 
     private val llmConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            llmService = (service as LlmService.LlmBinder).getService()
+            llmService = ILlmService.Stub.asInterface(service)
             llmBound = true
             checkAvailability()
-            Log.d(TAG, "LlmService connected")
+            Log.d(TAG, "LlmService connected (AIDL)")
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -118,35 +119,63 @@ class AiPipelineManager(private val context: Context) {
     }
 
     /**
-     * Load AI models from the given directory.
+     * Load Whisper model for speech recognition.
      */
-    fun loadModels(modelsDir: String) {
-        if (!isBatteryOk()) {
-            onError?.invoke("Battery too low for AI features (< 20%)")
-            return
+    fun loadWhisperModel(modelPath: String) {
+        try {
+            whisperService?.loadModel(modelPath)
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to load Whisper model", e)
         }
+    }
 
-        status = AiStatus.ModelLoading
+    /**
+     * Load LLM model for text transformation.
+     */
+    fun loadLlmModel(modelPath: String) {
+        try {
+            llmService?.loadModel(modelPath)
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to load LLM model", e)
+        }
+    }
 
-        whisperService?.loadModel("$modelsDir/whisper-base.bin") { whisperOk ->
-            llmService?.loadModel("$modelsDir/gemma-3-1b-q4.gguf") { llmOk ->
-                checkAvailability()
-                status = if (isAvailable) AiStatus.Idle else AiStatus.Error
-                if (!whisperOk) onError?.invoke("Failed to load Whisper model")
-                if (!llmOk) onError?.invoke("Failed to load LLM model")
-            }
+    /**
+     * Unload models to free memory.
+     */
+    fun unloadModels() {
+        try {
+            whisperService?.unloadModel()
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to unload Whisper model", e)
+        }
+        try {
+            llmService?.unloadModel()
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to unload LLM model", e)
         }
     }
 
     /**
      * Start voice input → transcription.
      */
-    fun startVoiceInput() {
+    fun startVoiceInput(language: String = "ja-JP") {
         val whisper = whisperService
-        if (whisper == null || !whisper.isModelLoaded) {
-            onError?.invoke("Whisper model not loaded")
+        if (whisper == null) {
+            onError?.invoke("Speech recognition not available")
             return
         }
+
+        try {
+            if (whisper.isRecognizing) {
+                onError?.invoke("Already recognizing")
+                return
+            }
+        } catch (e: RemoteException) {
+            onError?.invoke("Service communication error")
+            return
+        }
+
         if (!isBatteryOk()) {
             onError?.invoke("Battery too low")
             return
@@ -154,38 +183,60 @@ class AiPipelineManager(private val context: Context) {
 
         status = AiStatus.Listening
 
-        whisper.startRecognition(
-            onResult = { text ->
-                status = AiStatus.Idle
-                onTranscriptionResult?.invoke(text)
-            },
-            onPartialResult = { partial ->
-                status = AiStatus.Transcribing
-            },
-            onError = { error ->
-                status = AiStatus.Error
-                onError?.invoke(error)
-            },
-        )
+        try {
+            whisper.startRecognition(language, object : IWhisperCallback.Stub() {
+                override fun onResult(text: String) {
+                    status = AiStatus.Idle
+                    onTranscriptionResult?.invoke(text)
+                }
+
+                override fun onPartialResult(text: String) {
+                    status = AiStatus.Transcribing
+                }
+
+                override fun onError(message: String) {
+                    status = AiStatus.Error
+                    this@AiPipelineManager.onError?.invoke(message)
+                }
+            })
+        } catch (e: RemoteException) {
+            status = AiStatus.Error
+            onError?.invoke("Failed to start recognition")
+        }
     }
 
     fun stopVoiceInput() {
-        whisperService?.stopRecognition()
+        try {
+            whisperService?.stopRecognition()
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to stop recognition", e)
+        }
         status = AiStatus.Idle
     }
 
     /**
-     * Transform text using LLM.
+     * Transform text using LlmService (LLM or rule-based fallback).
      *
      * @param text Text to transform
-     * @param instruction e.g., "英語にして", "敬語にして", "要約して", "コードにして"
+     * @param instruction e.g., "敬語にして", "カタカナにして", "英語にして"
      */
     fun transformText(text: String, instruction: String) {
         val llm = llmService
-        if (llm == null || !llm.isModelLoaded) {
-            onError?.invoke("LLM model not loaded")
+        if (llm == null) {
+            onError?.invoke("LLM service not connected")
             return
         }
+
+        try {
+            if (llm.isGenerating) {
+                onError?.invoke("Already generating")
+                return
+            }
+        } catch (e: RemoteException) {
+            onError?.invoke("Service communication error")
+            return
+        }
+
         if (!isBatteryOk()) {
             onError?.invoke("Battery too low")
             return
@@ -193,41 +244,64 @@ class AiPipelineManager(private val context: Context) {
 
         status = AiStatus.Transforming
 
-        llm.transform(
-            text = text,
-            instruction = instruction,
-            onResult = { result ->
-                status = AiStatus.Idle
-                onTransformResult?.invoke(result)
-            },
-            onError = { error ->
-                status = AiStatus.Error
-                onError?.invoke(error)
-            },
-        )
+        try {
+            llm.transform(text, instruction, object : ILlmCallback.Stub() {
+                override fun onResult(text: String) {
+                    status = AiStatus.Idle
+                    onTransformResult?.invoke(text)
+                }
+
+                override fun onPartialResult(text: String) {
+                    // Streaming partial results (future use)
+                }
+
+                override fun onError(message: String) {
+                    status = AiStatus.Error
+                    this@AiPipelineManager.onError?.invoke(message)
+                }
+            })
+        } catch (e: RemoteException) {
+            status = AiStatus.Error
+            onError?.invoke("Failed to start transformation")
+        }
     }
 
-    fun unloadModels() {
-        whisperService?.unloadModel()
-        llmService?.unloadModel()
-        checkAvailability()
+    /**
+     * Cancel an in-progress LLM generation.
+     */
+    fun cancelTransformation() {
+        try {
+            llmService?.cancelGeneration()
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to cancel generation", e)
+        }
         status = AiStatus.Idle
     }
 
     /**
-     * Check if models exist on device.
+     * Check if Whisper model is loaded.
      */
-    fun areModelsDownloaded(): Boolean {
-        val modelsDir = context.filesDir.resolve("models")
-        val whisperFile = modelsDir.resolve("whisper-base.bin")
-        val llmFile = modelsDir.resolve("gemma-3-1b-q4.gguf")
-        return whisperFile.exists() && llmFile.exists()
+    fun isWhisperModelLoaded(): Boolean {
+        return try {
+            whisperService?.isModelLoaded ?: false
+        } catch (e: RemoteException) {
+            false
+        }
     }
 
-    fun getModelsDir(): String = context.filesDir.resolve("models").absolutePath
+    /**
+     * Check if LLM model is loaded.
+     */
+    fun isLlmModelLoaded(): Boolean {
+        return try {
+            llmService?.isModelLoaded ?: false
+        } catch (e: RemoteException) {
+            false
+        }
+    }
 
     private fun checkAvailability() {
-        isAvailable = whisperService?.isModelLoaded == true || llmService?.isModelLoaded == true
+        isAvailable = whisperBound || llmBound
     }
 
     private fun isBatteryOk(): Boolean {

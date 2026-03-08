@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "space.manus.nacre.config"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         minSdk = 26

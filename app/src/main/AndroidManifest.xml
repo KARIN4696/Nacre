@@ -40,16 +40,17 @@
             </intent-filter>
         </activity>
 
-        <!-- AI Services (separate processes for crash isolation) -->
+        <!-- Whisper STT Service — separate process for JNI crash isolation -->
         <service
             android:name="space.manus.nacre.ai.WhisperService"
-            android:process=":whisper"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":whisper" />
 
+        <!-- LLM Transform Service — separate process for JNI crash isolation -->
         <service
             android:name="space.manus.nacre.ai.LlmService"
-            android:process=":llm"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":llm" />
 
     </application>
 

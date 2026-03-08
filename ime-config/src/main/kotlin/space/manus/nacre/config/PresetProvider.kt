@@ -19,15 +19,17 @@ object PresetProvider {
 
     // ---- shared modifier row (Row 4) used by all presets ----
 
+    // SPEC Row 4: [Tab][Fn][SP(2x)][GL] [TR] [BS(1.2x)][EN(1.2x)][.]
     private val modifierRow = listOf(
-        KeyDef("\u21E7", action = KeyAction.Shift),
         KeyDef("Tab", action = KeyAction.Tab),
         KeyDef("Fn", action = KeyAction.Fn),
-        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 1.5f),
-        KeyDef("\u3042a", action = KeyAction.ToggleJapanese),
-        KeyDef("\u232B", action = KeyAction.Backspace, widthMultiplier = 1.1f),
-        KeyDef("\u21B5", action = KeyAction.Enter, widthMultiplier = 1.1f),
+        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
+            swipeDown = "\u3042", longPress = null),
         KeyDef("GL", action = KeyAction.SwitchIme),
+        KeyDef("\u232B", action = KeyAction.Backspace, widthMultiplier = 1.2f,
+            swipeLeft = "\u232Bw"),
+        KeyDef("\u21B5", action = KeyAction.Enter, widthMultiplier = 1.2f),
+        KeyDef(".", swipeUp = "_", swipeRight = "\u21E7"),
     )
 
     // ---- helper ----
@@ -74,14 +76,13 @@ object PresetProvider {
                 key("l", swipeUp = "-", swipeRight = "="),
                 key(";", swipeUp = ":", swipeRight = "'"),
             ),
-            // Row 3: Ctrl shortcuts on Z/X/C row + pipe/redirect
+            // Row 3: Z-M, with Ctrl shortcuts on swipe-down (all letters kept!)
             listOf(
-                KeyDef("C-c", action = KeyAction.KeyCode(KeyEvent.KEYCODE_C, ctrl = true)),
-                KeyDef("C-d", action = KeyAction.KeyCode(KeyEvent.KEYCODE_D, ctrl = true)),
-                KeyDef("C-z", action = KeyAction.KeyCode(KeyEvent.KEYCODE_Z, ctrl = true)),
-                key("|", swipeUp = "\\"),
-                key(">", swipeUp = ">>", swipeLeft = "<"),
-                key("n", swipeUp = "?"),
+                key("z", swipeUp = "!", swipeDown = "C-z"),
+                key("x", swipeUp = "\"", swipeDown = "C-x"),
+                key("c", swipeUp = "'", swipeDown = "C-c"),
+                key("v", swipeUp = "/", swipeRight = "|", swipeDown = "C-d"),
+                key("b", swipeUp = "\\"), key("n", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
                 key(",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
             ),
@@ -97,14 +98,15 @@ object PresetProvider {
 
     private val vimLayout: KeyboardLayout = KeyboardLayout(
         rows = listOf(
-            // Row 1: Q-P
+            // Row 1: Q-P (10 keys, balanced for V-split)
+            // Esc is on Fn long-press per SPEC
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape),
-                key("q", swipeUp = "1"), key("w", swipeUp = "2"),
-                key("e", swipeUp = "3"), key("r", swipeUp = "4"),
-                key("t", swipeUp = "5"), key("y", swipeUp = "6"),
-                key("u", swipeUp = "7"), key("i", swipeUp = "8"),
-                key("o", swipeUp = "9"), key("p", swipeUp = "0"),
+                key("q", swipeUp = "1", swipeLeft = "~", swipeRight = "`"),
+                key("w", swipeUp = "2"), key("e", swipeUp = "3"),
+                key("r", swipeUp = "4"), key("t", swipeUp = "5"),
+                key("y", swipeUp = "6"), key("u", swipeUp = "7"),
+                key("i", swipeUp = "8"), key("o", swipeUp = "9"),
+                key("p", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
             // Row 2: A-;
             listOf(
@@ -210,15 +212,15 @@ object PresetProvider {
                 key("t", swipeUp = ")"), key("n", swipeUp = "-", swipeRight = "="),
                 key("s", swipeUp = ":", swipeRight = ";"),
             ),
-            // Row 3: ;qjkxbmwvz
+            // Row 3: ;qjkxbmwvz (10 keys → 8 visible + v,z on swipes)
             listOf(
-                key(";", swipeUp = "!", swipeLeft = "\""),
+                key(";", swipeUp = "!", swipeDown = "z"),
                 key("q", swipeUp = "\"", swipeRight = "'"),
                 key("j", swipeUp = "'"),
                 key("k", swipeUp = "/", swipeRight = "|"),
                 key("x", swipeUp = "\\"), key("b", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
-                key("w", swipeUp = "<", swipeRight = ">"),
+                key("w", swipeUp = "<", swipeRight = ">", swipeDown = "v"),
             ),
             // Row 4: Modifiers (shared)
             modifierRow,

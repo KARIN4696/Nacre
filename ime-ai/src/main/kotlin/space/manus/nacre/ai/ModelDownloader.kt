@@ -23,6 +23,15 @@ class ModelDownloader(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentJob: Job? = null
 
+    /**
+     * Check if AI addon is purchased. Must be verified before downloading.
+     * Uses SharedPreferences set by BillingManager in the app module.
+     */
+    fun isAiAddonPurchased(): Boolean {
+        val prefs = context.getSharedPreferences("nacre_billing", Context.MODE_PRIVATE)
+        return prefs.getBoolean("ai_addon_purchased", false)
+    }
+
     data class DownloadProgress(
         val modelName: String,
         val bytesDownloaded: Long,
@@ -70,6 +79,13 @@ class ModelDownloader(private val context: Context) {
         fileName: String,
         onComplete: (Boolean) -> Unit,
     ) {
+        // SPEC: require purchase before model download
+        if (!isAiAddonPurchased()) {
+            Log.w(TAG, "AI addon not purchased, refusing download")
+            onComplete(false)
+            return
+        }
+
         currentJob = scope.launch {
             val outFile = File(getModelsDir(), fileName)
             val tmpFile = File(getModelsDir(), "$fileName.tmp")

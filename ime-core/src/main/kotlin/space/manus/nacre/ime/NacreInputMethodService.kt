@@ -30,12 +30,15 @@ import space.manus.nacre.ime.input.MacroEngine
 import space.manus.nacre.ime.input.NacreDictionary
 import space.manus.nacre.ime.input.PhysicalKeyboardDetector
 import space.manus.nacre.ime.input.SnippetEngine
+import space.manus.nacre.ime.input.VoiceInputManager
+import space.manus.nacre.ime.keyboard.KeyLighting
 import space.manus.nacre.ime.keyboard.KeyboardScreen
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -81,6 +84,10 @@ class NacreInputMethodService :
         private set
     lateinit var physicalKeyboardDetector: PhysicalKeyboardDetector
         private set
+    lateinit var voiceInputManager: VoiceInputManager
+        private set
+    lateinit var keyLighting: KeyLighting
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -98,6 +105,8 @@ class NacreInputMethodService :
         foldableDetector = FoldableDetector(this)
         layoutSelector = LayoutSelector(foldableDetector)
         physicalKeyboardDetector = PhysicalKeyboardDetector(this)
+        voiceInputManager = VoiceInputManager(this)
+        keyLighting = KeyLighting(this)
 
         clipboardManager.startListening()
         foldableDetector.startHingeAngleListening()
@@ -203,19 +212,22 @@ class NacreInputMethodService :
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // Tear down old container so onCreateInputView builds a fresh one
-        inputViewContainer?.let { container ->
-            (container.parent as? ViewGroup)?.removeView(container)
-            container.removeAllViews()
+        // SPEC: 300-500ms delay for foldable screen size stabilization
+        serviceScope.launch {
+            delay(350L)
+            inputViewContainer?.let { container ->
+                (container.parent as? ViewGroup)?.removeView(container)
+                container.removeAllViews()
+            }
+            inputViewContainer = null
+            setInputView(onCreateInputView())
         }
-        inputViewContainer = null
-        // Force the system to call onCreateInputView again
-        setInputView(onCreateInputView())
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
 
     override fun onDestroy() {
+        inputEngine.destroy()
         clipboardManager.stopListening()
         foldableDetector.stopHingeAngleListening()
         (inputEngine.dictionary as? NacreDictionary)?.flushPendingSave()
@@ -223,6 +235,7 @@ class NacreInputMethodService :
         snippetEngine.saveSnippets(this)
         autoConvertEngine.saveRules(this)
         feedbackManager.release()
+        voiceInputManager.release()
         if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         }

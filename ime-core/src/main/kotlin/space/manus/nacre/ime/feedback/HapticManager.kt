@@ -51,6 +51,16 @@ class HapticManager(private val context: Context) {
             prefs.edit().putString(KEY_STRENGTH, value.name).apply()
         }
 
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == KEY_STRENGTH) {
+            strength = loadStrength()
+        }
+    }
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+    }
+
     private fun loadStrength(): Strength {
         val name = prefs.getString(KEY_STRENGTH, Strength.MEDIUM.name)
         return try {
@@ -93,9 +103,13 @@ class HapticManager(private val context: Context) {
         if (!isAvailable) return
         val vib = vibrator ?: return
 
-        val scaledAmplitude = (baseAmplitude * strength.multiplier)
-            .toInt()
-            .coerceIn(1, 255)
+        // SPEC: hasAmplitudeControl() check — use DEFAULT_AMPLITUDE if not supported
+        val hasAmplitude = vib.hasAmplitudeControl()
+        val scaledAmplitude = if (hasAmplitude) {
+            (baseAmplitude * strength.multiplier).toInt().coerceIn(1, 255)
+        } else {
+            VibrationEffect.DEFAULT_AMPLITUDE
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // API 33+: Use composition primitives for precise haptics

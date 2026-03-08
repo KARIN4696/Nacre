@@ -9,12 +9,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import space.manus.nacre.config.KeyAction
 import space.manus.nacre.config.KeyDef
 import space.manus.nacre.ime.NacreInputMethodService
 
+private val CTRL_PATTERN = Regex("^C-([a-zA-Z])$")
+
 class InputEngine(private val service: NacreInputMethodService) {
 
+    private val scope = MainScope()
     private var editorInfo: EditorInfo? = null
     private val japaneseEngine = JapaneseEngine()
     private var composingText: String = ""
@@ -25,6 +31,10 @@ class InputEngine(private val service: NacreInputMethodService) {
     var selectedCandidateIndex by mutableStateOf(-1)
         private set
     var isConverting by mutableStateOf(false)
+        private set
+
+    // Password field state (observable by Compose for CandidateBar hiding)
+    var isPasswordField by mutableStateOf(false)
         private set
 
     // Dictionary reference (set from IO thread after loading)
@@ -53,11 +63,16 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             val noSuggestions = info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0
 
+            // SPEC: Password field — disable prediction, history, AI, hide candidate bar
+            isPasswordField = isPassword
+
             if (isPassword || isNumber || isEmail || isUri || noSuggestions) {
                 if (service.layerManager.isJapanese) {
                     service.layerManager.toggleJapanese()
                 }
             }
+        } else {
+            isPasswordField = false
         }
     }
 
@@ -72,6 +87,48 @@ class InputEngine(private val service: NacreInputMethodService) {
             SwipeDirection.Left -> keyDef.swipeLeft
             SwipeDirection.Right -> keyDef.swipeRight
         } ?: return
+
+        // Parse Emacs-style "C-x" notation as Ctrl+key
+        val ctrlMatch = CTRL_PATTERN.matchEntire(text)
+        if (ctrlMatch != null) {
+            val letter = ctrlMatch.groupValues[1].uppercase()
+            val keyCode = KeyEvent.keyCodeFromString("KEYCODE_$letter")
+            if (keyCode != KeyEvent.KEYCODE_UNKNOWN) {
+                processAction(KeyAction.KeyCode(keyCode, ctrl = true))
+                return
+            }
+        }
+
+        // Space swipe-down = Toggle Japanese (あ indicator)
+        if (text == "\u3042" && keyDef.action is KeyAction.Space) {
+            processAction(KeyAction.ToggleJapanese)
+            return
+        }
+
+        // BS swipe-left = word delete
+        if (text == "\u232Bw" && keyDef.action is KeyAction.Backspace) {
+            val ic = service.currentInputConnection ?: return
+            // Delete word to the left: find last word boundary
+            val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
+            val fullText = extracted?.text?.toString() ?: ""
+            val pos = extracted?.selectionStart ?: 0
+            if (pos > 0) {
+                val before = fullText.substring(0, pos)
+                val trimmed = before.trimEnd()
+                val lastSpace = trimmed.lastIndexOf(' ')
+                val deleteCount = pos - if (lastSpace >= 0) lastSpace + 1 else 0
+                if (deleteCount > 0) {
+                    ic.deleteSurroundingText(deleteCount, 0)
+                }
+            }
+            return
+        }
+
+        // Period key swipe-right = Shift toggle (⇧)
+        if (text == "\u21E7") {
+            processAction(KeyAction.Shift)
+            return
+        }
 
         // Commit any active composition before inserting swipe text
         val ic = service.currentInputConnection
@@ -169,7 +226,14 @@ class InputEngine(private val service: NacreInputMethodService) {
                 }
             }
 
-            is KeyAction.Tab -> sendKeyEvent(KeyEvent.KEYCODE_TAB)
+            is KeyAction.Tab -> {
+                // If a snippet session is active, advance to next tab stop
+                if (service.snippetEngine.hasActiveSession) {
+                    service.snippetEngine.nextTabStop(ic)
+                } else {
+                    sendKeyEvent(KeyEvent.KEYCODE_TAB)
+                }
+            }
             is KeyAction.Escape -> {
                 if (isConverting) {
                     cancelConversion(ic)
@@ -293,6 +357,8 @@ class InputEngine(private val service: NacreInputMethodService) {
     }
 
     private fun updatePredictions(kana: String) {
+        // SPEC: disable prediction in password fields
+        if (isPasswordField) return
         val dict = dictionary ?: return
         if (kana.isEmpty()) {
             clearCandidates()
@@ -340,7 +406,28 @@ class InputEngine(private val service: NacreInputMethodService) {
     }
 
     private fun commitText(text: String) {
-        service.currentInputConnection?.commitText(text, 1)
+        val ic = service.currentInputConnection ?: return
+        ic.commitText(text, 1)
+
+        // Single IPC call for both auto-convert and macro checks
+        val extracted = ic.getExtractedText(ExtractedTextRequest(), 0)
+        val fullText = extracted?.text?.toString() ?: ""
+
+        // Check auto-convert rules (e.g. "->" → "→")
+        if (service.autoConvertEngine.isEnabled && fullText.isNotEmpty()) {
+            service.autoConvertEngine.checkAndConvert(fullText, ic)
+        }
+
+        // Check macro triggers (e.g. ";gs" → "git status" + Enter)
+        val macro = service.macroEngine.checkTrigger(fullText)
+        if (macro != null && macro.trigger != null) {
+            ic.deleteSurroundingText(macro.trigger.length, 0)
+            // Re-fetch IC inside coroutine to avoid stale reference
+            scope.launch {
+                val freshIc = service.currentInputConnection ?: return@launch
+                service.macroEngine.executeMacro(macro, freshIc)
+            }
+        }
     }
 
     private fun sendKeyEvent(keyCode: Int) {
@@ -375,6 +462,10 @@ class InputEngine(private val service: NacreInputMethodService) {
                 }
             }
         }
+    }
+
+    fun destroy() {
+        scope.cancel()
     }
 
     private fun isTerminalApp(info: EditorInfo?): Boolean {

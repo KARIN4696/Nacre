@@ -12,7 +12,7 @@ import android.view.WindowManager
  * Detects foldable device state: hinge angle, sub-display, and table-top mode.
  * Uses standard Android APIs with graceful fallbacks for non-foldable devices.
  */
-class FoldableDetector(private val context: Context) : SensorEventListener {
+class FoldableDetector(val context: Context) : SensorEventListener {
 
     private val sensorManager: SensorManager =
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager

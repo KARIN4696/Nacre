@@ -1,9 +1,6 @@
 package space.manus.nacre.ime.keyboard
 
 import android.content.Intent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -23,7 +20,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
 import space.manus.nacre.ime.NacreInputMethodService
+import space.manus.nacre.ime.input.TextTransformer
 
 private val PaletteBackground = Color(0xFF0F0F23)
 private val SearchFieldBg = Color(0xFF16213E)
@@ -239,6 +239,53 @@ private fun buildCommandList(
         )
     )
 
+    // Voice input
+    items.add(
+        CommandItem(
+            name = "Voice Input",
+            trigger = "voice mic",
+            type = CommandType.BuiltIn,
+            action = {
+                val lang = if (service.layerManager.isJapanese) "ja-JP" else "en-US"
+                service.voiceInputManager.startListening(lang)
+                onDismiss()
+            },
+        )
+    )
+
+    // Text transformation commands
+    for (cmd in TextTransformer.commands) {
+        items.add(
+            CommandItem(
+                name = cmd.label,
+                trigger = "${cmd.id} ${cmd.description}",
+                type = CommandType.BuiltIn,
+                action = {
+                    val ic = service.currentInputConnection
+                    if (ic != null) {
+                        val extracted = ic.getExtractedText(
+                            android.view.inputmethod.ExtractedTextRequest(), 0,
+                        )
+                        val selected = extracted?.text?.let { full ->
+                            val start = extracted.selectionStart
+                            val end = extracted.selectionEnd
+                            if (start >= 0 && end > start && end <= full.length) {
+                                full.substring(start, end)
+                            } else {
+                                null
+                            }
+                        }
+                        if (selected != null && selected.isNotEmpty()) {
+                            val result = TextTransformer.transform(selected, cmd.id)
+                            ic.commitText(result, 1)
+                        }
+                    }
+                    onDismiss()
+                },
+            )
+        )
+    }
+
     // Dynamic macros from MacroEngine
     for (macro in service.macroEngine.macros) {
         items.add(
@@ -249,8 +296,9 @@ private fun buildCommandList(
                 action = {
                     val ic = service.currentInputConnection
                     if (ic != null) {
-                        CoroutineScope(Dispatchers.Main).launch {
-                            service.macroEngine.executeMacro(macro, ic)
+                        MainScope().launch {
+                            val freshIc = service.currentInputConnection ?: return@launch
+                            service.macroEngine.executeMacro(macro, freshIc)
                         }
                     }
                     onDismiss()

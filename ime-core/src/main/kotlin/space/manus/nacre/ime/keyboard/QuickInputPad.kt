@@ -117,27 +117,40 @@ fun QuickInputPad(service: NacreInputMethodService) {
         Spacer(modifier = Modifier.height(8.dp))
 
         // Voice input button
+        val voiceManager = service.voiceInputManager
+        val isListening = voiceManager.isListening
         Box(
             modifier = Modifier
                 .size(72.dp)
                 .clip(CircleShape)
-                .background(VoiceButtonBg)
+                .background(if (isListening) Color(0xFFFF4444) else VoiceButtonBg)
                 .clickable {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    // Trigger voice input via the system
-                    val ic = service.currentInputConnection
-                    ic?.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_NONE)
+                    if (isListening) {
+                        voiceManager.stopListening()
+                    } else {
+                        val lang = if (service.layerManager.isJapanese) "ja-JP" else "en-US"
+                        voiceManager.startListening(lang)
+                    }
                 }
                 .semantics {
-                    contentDescription = "Voice input"
+                    contentDescription = if (isListening) "Stop voice input" else "Voice input"
                 },
             contentAlignment = Alignment.Center,
         ) {
-            // Microphone icon as text (Unicode)
             Text(
-                text = "\uD83C\uDFA4",
+                text = if (isListening) "\u23F9" else "\uD83C\uDFA4",
                 fontSize = 28.sp,
-                color = VoiceButtonText,
+                color = if (isListening) Color.White else VoiceButtonText,
+            )
+        }
+        // Show partial result
+        if (voiceManager.partialText.isNotEmpty()) {
+            Text(
+                text = voiceManager.partialText,
+                color = Color(0xFFE0E0E0),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
 

@@ -35,7 +35,8 @@ fun CandidateBar(
     val candidates = service.inputEngine.candidates
     val selectedIndex = service.inputEngine.selectedCandidateIndex
 
-    if (candidates.isEmpty()) return
+    // SPEC: hide candidate bar in password fields
+    if (candidates.isEmpty() || service.inputEngine.isPasswordField) return
 
     val scrollState = rememberScrollState()
 

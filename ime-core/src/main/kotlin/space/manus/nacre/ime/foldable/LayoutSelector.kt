@@ -1,5 +1,7 @@
 package space.manus.nacre.ime.foldable
 
+import android.content.Context
+
 /**
  * Available keyboard layout modes for different screen sizes and form factors.
  */
@@ -23,11 +25,23 @@ enum class LayoutMode {
  */
 class LayoutSelector(private val detector: FoldableDetector) {
 
+    companion object {
+        private const val PREFS_NAME = "nacre_layout"
+        private const val KEY_SUB_DISPLAY_MODE = "sub_display_mode"
+    }
+
+    private val prefs = detector.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
     /**
      * User-selected preferred layout for the sub-display.
      * When set, overrides the automatic selection for foldable sub-displays.
+     * Persisted to SharedPreferences.
      */
-    var userSubDisplayMode: LayoutMode = LayoutMode.CompactQwerty
+    var userSubDisplayMode: LayoutMode = loadSubDisplayMode()
+        set(value) {
+            field = value
+            prefs.edit().putString(KEY_SUB_DISPLAY_MODE, value.name).apply()
+        }
 
     /**
      * Determines the best layout mode for the current screen configuration.
@@ -48,6 +62,15 @@ class LayoutSelector(private val detector: FoldableDetector) {
             widthDp >= 380f -> LayoutMode.StandardQwerty
             widthDp >= 200f -> LayoutMode.QuickInputPad
             else -> LayoutMode.QuickInputPad
+        }
+    }
+
+    private fun loadSubDisplayMode(): LayoutMode {
+        val name = prefs.getString(KEY_SUB_DISPLAY_MODE, LayoutMode.CompactQwerty.name)
+        return try {
+            LayoutMode.valueOf(name ?: LayoutMode.CompactQwerty.name)
+        } catch (_: IllegalArgumentException) {
+            LayoutMode.CompactQwerty
         }
     }
 }

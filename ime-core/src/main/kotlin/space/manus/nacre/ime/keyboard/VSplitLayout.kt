@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import space.manus.nacre.ime.NacreInputMethodService
@@ -37,9 +38,14 @@ fun VSplitKeyboardScreen(
     // Clamp angle to safe range
     val clampedAngle = angle.coerceIn(0f, 30f)
 
+    // SPEC: keyboard height <= 35% of screen height
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
+    val maxKeyboardHeight = screenHeightDp * 0.35f
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(max = maxKeyboardHeight)
             .background(KeyboardBackground)
             .padding(horizontal = 4.dp, vertical = 2.dp),
     ) {
@@ -111,6 +117,7 @@ private fun VSplitRow(
     service: NacreInputMethodService,
     angle: Float,
     showTrackball: Boolean,
+    rowIndex: Int = 0,
 ) {
     val rowHeight = if (showTrackball) 60.dp else 52.dp
 
@@ -131,20 +138,24 @@ private fun VSplitRow(
                     transformOrigin = TransformOrigin(1f, 0.5f)
                 },
         ) {
-            for (keyDef in leftKeys) {
+            for ((colIndex, keyDef) in leftKeys.withIndex()) {
                 KeyView(
                     keyDef = keyDef,
                     service = service,
                     modifier = Modifier.weight(keyDef.widthMultiplier),
+                    row = rowIndex,
+                    column = colIndex,
                 )
             }
         }
 
-        // Center: trackball or spacer
+        // Center: trackball or spacer with >=8dp deadzone (SPEC)
         if (showTrackball) {
-            TrackballView(service = service, modifier = Modifier.size(60.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            TrackballView(service = service, modifier = Modifier.size(76.dp))
+            Spacer(modifier = Modifier.width(4.dp))
         } else {
-            Spacer(modifier = Modifier.width(60.dp))
+            Spacer(modifier = Modifier.width(84.dp)) // 76 + 8dp deadzone
         }
 
         // Right half: rotate counter-clockwise (negative angle)
@@ -157,11 +168,14 @@ private fun VSplitRow(
                     transformOrigin = TransformOrigin(0f, 0.5f)
                 },
         ) {
-            for (keyDef in rightKeys) {
+            val mid = leftKeys.size
+            for ((colIndex, keyDef) in rightKeys.withIndex()) {
                 KeyView(
                     keyDef = keyDef,
                     service = service,
                     modifier = Modifier.weight(keyDef.widthMultiplier),
+                    row = rowIndex,
+                    column = mid + colIndex,
                 )
             }
         }

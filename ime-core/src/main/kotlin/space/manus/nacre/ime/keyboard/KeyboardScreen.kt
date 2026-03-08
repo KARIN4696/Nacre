@@ -7,8 +7,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import space.manus.nacre.config.ThemeProvider
 import space.manus.nacre.ime.NacreInputMethodService
 import space.manus.nacre.ime.input.Layer
@@ -16,46 +18,74 @@ import space.manus.nacre.ime.trackball.TrackballView
 
 @Composable
 fun KeyboardScreen(service: NacreInputMethodService) {
-    val layerManager = service.layerManager
-    val layout = layerManager.currentLayout()
-    val theme = ThemeProvider.loadSelectedTheme(service)
-    val bgColor = Color(theme.background)
-    val accentColor = Color(theme.accent)
+    val layoutMode = service.layoutSelector.selectLayout()
+
+    // Animate lighting tick (updates every frame when lighting is active)
+    val lighting = service.keyLighting
+    if (lighting.mode != KeyLighting.Mode.OFF) {
+        LaunchedEffect(lighting.mode) {
+            while (true) {
+                lighting.animationTick = System.currentTimeMillis()
+                delay(50L) // 20fps for lighting
+            }
+        }
+    }
 
     // Panel state
     var showClipboard by remember { mutableStateOf(false) }
     var showCommandPalette by remember { mutableStateOf(false) }
 
     // Check if command palette should open (Fn+Space triggers it)
-    val isCommandPaletteRequested = layerManager.isCommandPaletteRequested
+    val isCommandPaletteRequested = service.layerManager.isCommandPaletteRequested
     LaunchedEffect(isCommandPaletteRequested) {
         if (isCommandPaletteRequested) {
             showCommandPalette = true
-            layerManager.isCommandPaletteRequested = false
+            service.layerManager.isCommandPaletteRequested = false
         }
     }
+
+    // Overlay panels take over the whole view
+    if (showClipboard) {
+        ClipboardPanel(service = service, onDismiss = { showClipboard = false })
+        return
+    }
+    if (showCommandPalette) {
+        CommandPalette(service = service, onDismiss = { showCommandPalette = false })
+        return
+    }
+
+    when (layoutMode) {
+        space.manus.nacre.ime.foldable.LayoutMode.FullVSplit ->
+            VSplitKeyboardScreen(service = service)
+        else ->
+            StandardKeyboardScreen(service = service)
+    }
+}
+
+@Composable
+private fun StandardKeyboardScreen(service: NacreInputMethodService) {
+    val layerManager = service.layerManager
+    val layout = layerManager.currentLayout()
+    val theme = remember { ThemeProvider.loadSelectedTheme(service) }
+    val bgColor = Color(theme.background.toInt())
+    val accentColor = Color(theme.accent.toInt())
+
+    // SPEC: keyboard height <= 35% of screen height
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
+    val maxKeyboardHeight = screenHeightDp * 0.35f
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(max = maxKeyboardHeight)
             .background(bgColor)
             .padding(horizontal = 4.dp, vertical = 2.dp),
     ) {
-        // Overlay panels
-        if (showClipboard) {
-            ClipboardPanel(service = service, onDismiss = { showClipboard = false })
-            return@Column
-        }
-        if (showCommandPalette) {
-            CommandPalette(service = service, onDismiss = { showCommandPalette = false })
-            return@Column
-        }
-
         // Candidate bar (prediction/conversion)
         CandidateBar(service = service)
 
-        // Status bar: layer + Japanese mode + shift indicators
-        StatusBar(layerManager = layerManager, accentColor = accentColor)
+        // Status bar: layer + Japanese mode + shift + voice indicators
+        StatusBar(service = service, layerManager = layerManager, accentColor = accentColor)
 
         // Keyboard rows with trackball in the middle
         val rows = layout.rows
@@ -65,9 +95,10 @@ fun KeyboardScreen(service: NacreInputMethodService) {
                     keys = row,
                     service = service,
                     showTrackball = rowIndex == 2,
+                    rowIndex = rowIndex,
                 )
             } else {
-                KeyRow(keys = row, service = service)
+                KeyRow(keys = row, service = service, rowIndex = rowIndex)
             }
         }
     }
@@ -75,27 +106,40 @@ fun KeyboardScreen(service: NacreInputMethodService) {
 
 @Composable
 private fun StatusBar(
+    service: NacreInputMethodService,
     layerManager: space.manus.nacre.ime.input.LayerManager,
     accentColor: Color,
 ) {
     val showLayer = layerManager.currentLayer != Layer.Base
     val showJa = layerManager.isJapanese
     val showShift = layerManager.isShifted
+    val voiceManager = service.voiceInputManager
+    val isListening = voiceManager.isListening
 
-    if (showLayer || showJa || showShift) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (showJa) {
-                    Text(text = "あ", color = accentColor, fontSize = 10.sp)
-                }
-                if (showShift) {
-                    Text(text = "⇧", color = accentColor, fontSize = 10.sp)
-                }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (showJa) {
+                Text(text = "あ", color = accentColor, fontSize = 10.sp)
+            }
+            if (showShift) {
+                Text(text = "⇧", color = accentColor, fontSize = 10.sp)
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Voice input indicator / partial text
+            if (isListening) {
+                Text(
+                    text = voiceManager.partialText.ifEmpty { "🎤 …" },
+                    color = Color(0xFFFF4444),
+                    fontSize = 10.sp,
+                )
             }
             if (showLayer) {
                 Text(
@@ -116,6 +160,7 @@ private fun StatusBar(
 fun KeyRow(
     keys: List<space.manus.nacre.config.KeyDef>,
     service: NacreInputMethodService,
+    rowIndex: Int = 0,
 ) {
     Row(
         modifier = Modifier
@@ -124,11 +169,13 @@ fun KeyRow(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        for (keyDef in keys) {
+        for ((colIndex, keyDef) in keys.withIndex()) {
             KeyView(
                 keyDef = keyDef,
                 service = service,
                 modifier = Modifier.weight(keyDef.widthMultiplier),
+                row = rowIndex,
+                column = colIndex,
             )
         }
     }
@@ -139,6 +186,7 @@ fun KeyRowWithTrackball(
     keys: List<space.manus.nacre.config.KeyDef>,
     service: NacreInputMethodService,
     showTrackball: Boolean,
+    rowIndex: Int = 0,
 ) {
     val mid = keys.size / 2
     val leftKeys = keys.subList(0, mid)
@@ -152,27 +200,34 @@ fun KeyRowWithTrackball(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(modifier = Modifier.weight(1f)) {
-            for (keyDef in leftKeys) {
+            for ((colIndex, keyDef) in leftKeys.withIndex()) {
                 KeyView(
                     keyDef = keyDef,
                     service = service,
                     modifier = Modifier.weight(keyDef.widthMultiplier),
+                    row = rowIndex,
+                    column = colIndex,
                 )
             }
         }
 
         if (showTrackball) {
-            TrackballView(service = service, modifier = Modifier.size(60.dp))
+            // SPEC: >=8dp deadzone between trackball and adjacent V/B keys
+            Spacer(modifier = Modifier.width(4.dp))
+            TrackballView(service = service, modifier = Modifier.size(76.dp))
+            Spacer(modifier = Modifier.width(4.dp))
         } else {
-            Spacer(modifier = Modifier.width(60.dp))
+            Spacer(modifier = Modifier.width(84.dp)) // 76 + 8dp deadzone
         }
 
         Row(modifier = Modifier.weight(1f)) {
-            for (keyDef in rightKeys) {
+            for ((colIndex, keyDef) in rightKeys.withIndex()) {
                 KeyView(
                     keyDef = keyDef,
                     service = service,
                     modifier = Modifier.weight(keyDef.widthMultiplier),
+                    row = rowIndex,
+                    column = mid + colIndex,
                 )
             }
         }

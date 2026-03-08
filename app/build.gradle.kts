@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "space.manus.nacre"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "space.manus.nacre"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -54,6 +54,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Google Play Billing for Nacre AI addon purchase
+    implementation("com.android.billingclient:billing-ktx:7.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

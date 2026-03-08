@@ -27,11 +27,36 @@ class LayerManager {
 
     var activePreset: PresetProvider.PresetType = PresetProvider.PresetType.Default
 
+    // Fn hold (temporary layer switch) state
+    private var fnHeld = false
+
     fun toggleFn() {
         currentLayer = when (currentLayer) {
             Layer.Base -> Layer.Fn1
             Layer.Fn1 -> Layer.Base
             Layer.Fn2 -> Layer.Base
+        }
+    }
+
+    /** Called when Fn key is pressed down (hold = temporary switch) */
+    fun fnDown() {
+        if (currentLayer == Layer.Base) {
+            fnHeld = true
+            currentLayer = Layer.Fn1
+        }
+    }
+
+    /** Called when Fn key is released. If held, return to base. */
+    fun fnUp(wasTap: Boolean) {
+        if (fnHeld) {
+            fnHeld = false
+            if (wasTap) {
+                // Short tap: toggle (stay on Fn1)
+                // Already on Fn1 from fnDown, keep it
+            } else {
+                // Was held: return to base
+                currentLayer = Layer.Base
+            }
         }
     }
 

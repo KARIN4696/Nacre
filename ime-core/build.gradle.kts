@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "space.manus.nacre.ime"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         minSdk = 26
@@ -29,7 +29,7 @@ android {
 dependencies {
     implementation(project(":ime-config"))
 
-    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.core:core-ktx:1.13.1")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")

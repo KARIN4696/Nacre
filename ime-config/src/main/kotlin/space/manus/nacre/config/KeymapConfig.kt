@@ -64,17 +64,19 @@ object DefaultLayouts {
                 key("m", swipeUp = "+", swipeRight = "="),
                 key(",", label = ",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
             ),
-            // Row 4: Modifiers
+            // Row 4: Modifiers (SPEC layout)
+            // [Tab][Fn][SP(2x)][GL] [TR] [BS(1.2x)][EN(1.2x)][.]
             listOf(
-                KeyDef("⇧", action = KeyAction.Shift),
                 KeyDef("Tab", action = KeyAction.Tab),
-                KeyDef("Fn", action = KeyAction.Fn),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 1.5f),
-                KeyDef("あa", action = KeyAction.ToggleJapanese),
-                // Trackball area
-                KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.1f),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.1f),
+                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 1.08f),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
+                    swipeDown = "あ", longPress = null),
                 KeyDef("GL", action = KeyAction.SwitchIme),
+                // Trackball area
+                KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f,
+                    swipeLeft = "⌫w"), // BS left-swipe = word delete (SPEC)
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
+                KeyDef(".", swipeUp = "_", swipeRight = "⇧"),
             ),
         ),
     )
