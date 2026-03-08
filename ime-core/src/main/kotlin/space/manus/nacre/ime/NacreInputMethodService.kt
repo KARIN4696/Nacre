@@ -128,42 +128,46 @@ class NacreInputMethodService :
         }
 
         return try {
-            // Wrap ComposeView in a FrameLayout that sets ViewTree owners
-            // on the parent chain when attached. ComposeView is final and
-            // can't be subclassed. The system's parentPanel LinearLayout
-            // doesn't have ViewTreeLifecycleOwner, so we must set it on
-            // every ancestor before ComposeView tries to resolve it.
-            val container = object : FrameLayout(this) {
+            val service = this
+            // FrameLayout wrapper: when attached to the IME window, walk up
+            // the parent chain and stamp ViewTree owners on every ancestor
+            // BEFORE adding the ComposeView. ComposeView resolves owners in
+            // its own onAttachedToWindow, so the owners must already be on
+            // the parent chain at that point.
+            val container = object : FrameLayout(service) {
                 override fun onAttachedToWindow() {
+                    // First, set owners on ourselves
+                    setViewTreeLifecycleOwner(service)
+                    setViewTreeViewModelStoreOwner(service)
+                    setViewTreeSavedStateRegistryOwner(service)
+                    // Then propagate up the entire parent chain
                     var p = parent
                     while (p is View) {
-                        p.setViewTreeLifecycleOwner(this@NacreInputMethodService)
-                        p.setViewTreeViewModelStoreOwner(this@NacreInputMethodService)
-                        p.setViewTreeSavedStateRegistryOwner(this@NacreInputMethodService)
+                        p.setViewTreeLifecycleOwner(service)
+                        p.setViewTreeViewModelStoreOwner(service)
+                        p.setViewTreeSavedStateRegistryOwner(service)
                         p = p.parent
                     }
                     super.onAttachedToWindow()
+                    // NOW it is safe to add ComposeView — all ancestors have owners
+                    post {
+                        if (childCount == 0) {
+                            val composeView = ComposeView(context).apply {
+                                setContent {
+                                    KeyboardScreen(service = service)
+                                }
+                            }
+                            addView(
+                                composeView,
+                                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+                            )
+                        }
+                    }
                 }
             }
             container.setViewTreeLifecycleOwner(this)
             container.setViewTreeViewModelStoreOwner(this)
             container.setViewTreeSavedStateRegistryOwner(this)
-
-            val composeView = ComposeView(this).apply {
-                setViewTreeLifecycleOwner(this@NacreInputMethodService)
-                setViewTreeViewModelStoreOwner(this@NacreInputMethodService)
-                setViewTreeSavedStateRegistryOwner(this@NacreInputMethodService)
-                setContent {
-                    KeyboardScreen(service = this@NacreInputMethodService)
-                }
-            }
-            container.addView(
-                composeView,
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                ),
-            )
 
             inputViewContainer = container
             container
@@ -199,8 +203,14 @@ class NacreInputMethodService :
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        (inputViewContainer?.parent as? ViewGroup)?.removeView(inputViewContainer)
+        // Tear down old container so onCreateInputView builds a fresh one
+        inputViewContainer?.let { container ->
+            (container.parent as? ViewGroup)?.removeView(container)
+            container.removeAllViews()
+        }
         inputViewContainer = null
+        // Force the system to call onCreateInputView again
+        setInputView(onCreateInputView())
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
