@@ -65,18 +65,19 @@ object DefaultLayouts {
                 key(",", label = ",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
             ),
             // Row 4: Modifiers (SPEC layout)
-            // [Tab][Fn][SP(2x)][GL] [TR] [BS(1.2x)][EN(1.2x)][.]
+            // [Tab][Fn][SP(2x)][⇧] [TR] [BS(1.2x)][EN(1.2x)][GL][.]
             listOf(
                 KeyDef("Tab", action = KeyAction.Tab),
-                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 1.08f),
+                KeyDef("Fn", action = KeyAction.Fn),
                 KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeDown = "あ", longPress = null),
-                KeyDef("GL", action = KeyAction.SwitchIme),
+                KeyDef("⇧", action = KeyAction.Shift),
                 // Trackball area
                 KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f,
                     swipeLeft = "⌫w"), // BS left-swipe = word delete (SPEC)
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                KeyDef(".", swipeUp = "_", swipeRight = "⇧"),
+                KeyDef("GL", action = KeyAction.SwitchIme),
+                KeyDef(".", swipeUp = "_"),
             ),
         ),
     )
@@ -102,12 +103,13 @@ object DefaultLayouts {
                 KeyDef("→", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)),
             ),
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape, widthMultiplier = 1.1f),
-                KeyDef("Fn2", action = KeyAction.FnPage2, widthMultiplier = 1.1f),
+                KeyDef("Esc", action = KeyAction.Escape),
+                KeyDef("Fn2", action = KeyAction.FnPage2),
                 KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f),
-                KeyDef("GL", action = KeyAction.SwitchIme),
+                KeyDef("⇧", action = KeyAction.Shift),
                 KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
+                KeyDef("GL", action = KeyAction.SwitchIme),
                 key("_"),
             ),
         ),
@@ -140,12 +142,13 @@ object DefaultLayouts {
                 KeyDef("Del", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_FORWARD_DEL)),
             ),
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape, widthMultiplier = 1.1f),
-                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 1.1f),
+                KeyDef("Esc", action = KeyAction.Escape),
+                KeyDef("Fn", action = KeyAction.Fn),
                 KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f),
-                KeyDef("GL", action = KeyAction.SwitchIme),
+                KeyDef("⇧", action = KeyAction.Shift),
                 KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
+                KeyDef("GL", action = KeyAction.SwitchIme),
                 key("`"),
             ),
         ),

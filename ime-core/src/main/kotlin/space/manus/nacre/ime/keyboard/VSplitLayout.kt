@@ -29,7 +29,7 @@ private val KeyboardBackground = Color(0xFF0F0F23)
 @Composable
 fun VSplitKeyboardScreen(
     service: NacreInputMethodService,
-    angle: Float = 15f,
+    angle: Float = 8f,
 ) {
     val layerManager = service.layerManager
     val layout = layerManager.currentLayout()
@@ -119,7 +119,7 @@ private fun VSplitRow(
     showTrackball: Boolean,
     rowIndex: Int = 0,
 ) {
-    val rowHeight = if (showTrackball) 60.dp else 52.dp
+    val rowHeight = if (showTrackball) 64.dp else 56.dp
 
     Row(
         modifier = Modifier
@@ -136,6 +136,7 @@ private fun VSplitRow(
                 .graphicsLayer {
                     rotationZ = angle
                     transformOrigin = TransformOrigin(1f, 0.5f)
+                    clip = false
                 },
         ) {
             for ((colIndex, keyDef) in leftKeys.withIndex()) {
@@ -149,13 +150,13 @@ private fun VSplitRow(
             }
         }
 
-        // Center: trackball or spacer with >=8dp deadzone (SPEC)
+        // Center: trackball or gap
         if (showTrackball) {
             Spacer(modifier = Modifier.width(4.dp))
-            TrackballView(service = service, modifier = Modifier.size(76.dp))
+            TrackballView(service = service, modifier = Modifier.size(64.dp))
             Spacer(modifier = Modifier.width(4.dp))
         } else {
-            Spacer(modifier = Modifier.width(84.dp)) // 76 + 8dp deadzone
+            Spacer(modifier = Modifier.width(24.dp))
         }
 
         // Right half: rotate counter-clockwise (negative angle)
@@ -166,6 +167,7 @@ private fun VSplitRow(
                 .graphicsLayer {
                     rotationZ = -angle
                     transformOrigin = TransformOrigin(0f, 0.5f)
+                    clip = false
                 },
         ) {
             val mid = leftKeys.size

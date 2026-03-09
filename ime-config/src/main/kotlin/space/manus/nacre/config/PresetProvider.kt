@@ -19,17 +19,18 @@ object PresetProvider {
 
     // ---- shared modifier row (Row 4) used by all presets ----
 
-    // SPEC Row 4: [Tab][Fn][SP(2x)][GL] [TR] [BS(1.2x)][EN(1.2x)][.]
+    // SPEC Row 4: [Tab][Fn][SP(2x)][⇧] [TR] [BS(1.2x)][EN(1.2x)][GL][.]
     private val modifierRow = listOf(
         KeyDef("Tab", action = KeyAction.Tab),
         KeyDef("Fn", action = KeyAction.Fn),
         KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
             swipeDown = "\u3042", longPress = null),
-        KeyDef("GL", action = KeyAction.SwitchIme),
+        KeyDef("\u21E7", action = KeyAction.Shift),
         KeyDef("\u232B", action = KeyAction.Backspace, widthMultiplier = 1.2f,
             swipeLeft = "\u232Bw"),
         KeyDef("\u21B5", action = KeyAction.Enter, widthMultiplier = 1.2f),
-        KeyDef(".", swipeUp = "_", swipeRight = "\u21E7"),
+        KeyDef("GL", action = KeyAction.SwitchIme),
+        KeyDef(".", swipeUp = "_"),
     )
 
     // ---- helper ----

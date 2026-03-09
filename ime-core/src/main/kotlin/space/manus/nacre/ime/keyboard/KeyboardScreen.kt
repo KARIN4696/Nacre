@@ -165,7 +165,7 @@ fun KeyRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp),
+            .height(56.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -195,7 +195,7 @@ fun KeyRowWithTrackball(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (showTrackball) 60.dp else 52.dp),
+            .height(if (showTrackball) 64.dp else 56.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
