@@ -20,12 +20,12 @@ class ConfigRepository(context: Context) {
 
         // Defaults
         private const val DEFAULT_PRESET = "Default"
-        private const val DEFAULT_THEME = "Dark"
+        private const val DEFAULT_THEME = "AMOLED"
         private const val DEFAULT_HAPTIC_STRENGTH = 50
         private const val DEFAULT_SOUND_PROFILE = "soft"
         private const val DEFAULT_SOUND_VOLUME = 50
         private const val DEFAULT_KEYBOARD_HEIGHT = 280
-        private const val DEFAULT_V_ANGLE = 0f
+        private const val DEFAULT_V_ANGLE = 3f
         private const val DEFAULT_AUTO_CONVERT = true
         private const val DEFAULT_LIGHTING_MODE = "none"
     }

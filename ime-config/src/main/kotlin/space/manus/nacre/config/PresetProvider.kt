@@ -19,18 +19,17 @@ object PresetProvider {
 
     // ---- shared modifier row (Row 4) used by all presets ----
 
-    // SPEC Row 4: [Tab][Fn][SP(2x)][⇧] [TR] [BS(1.2x)][EN(1.2x)][GL][.]
+    // Row 4: [Esc][Fn][⇧][⎵⎵] | [？][ー]['][あ/A]
     private val modifierRow = listOf(
-        KeyDef("Tab", action = KeyAction.Tab),
+        KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
         KeyDef("Fn", action = KeyAction.Fn),
-        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
-            swipeDown = "\u3042", longPress = null),
         KeyDef("\u21E7", action = KeyAction.Shift),
-        KeyDef("\u232B", action = KeyAction.Backspace, widthMultiplier = 1.2f,
-            swipeLeft = "\u232Bw"),
-        KeyDef("\u21B5", action = KeyAction.Enter, widthMultiplier = 1.2f),
-        KeyDef("GL", action = KeyAction.SwitchIme),
-        KeyDef(".", swipeUp = "_"),
+        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
+            swipeUp = "Tab", swipeLeft = "\u30FC"),
+        KeyDef("\uFF1F", label = "\uFF1F", swipeUp = "?", swipeDown = "\uFF01"),
+        KeyDef("\u30FC", label = "\u30FC", swipeUp = "\u301C", swipeDown = "-"),
+        KeyDef("'", swipeUp = "\"", swipeDown = ";"),
+        KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),
     )
 
     // ---- helper ----
@@ -67,7 +66,7 @@ object PresetProvider {
                 key("i", swipeUp = "8"), key("o", swipeUp = "9"),
                 key("p", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
-            // Row 2: A-; with pipe/redirect on swipes
+            // Row 2: A-L + BS with pipe/redirect on swipes
             listOf(
                 key("a", swipeUp = "@", swipeLeft = "{", swipeRight = "}"),
                 key("s", swipeUp = "#"), key("d", swipeUp = "$"),
@@ -75,9 +74,9 @@ object PresetProvider {
                 key("h", swipeUp = "|", swipeLeft = "<", swipeRight = ">"),
                 key("j", swipeUp = "("), key("k", swipeUp = ")"),
                 key("l", swipeUp = "-", swipeRight = "="),
-                key(";", swipeUp = ":", swipeRight = "'"),
+                KeyDef("\u232B", action = KeyAction.Backspace, swipeUp = ":", swipeRight = ";", swipeLeft = "\u232Bw"),
             ),
-            // Row 3: Z-M, with Ctrl shortcuts on swipe-down (all letters kept!)
+            // Row 3: Z-M + Enter, with Ctrl shortcuts on swipe-down
             listOf(
                 key("z", swipeUp = "!", swipeDown = "C-z"),
                 key("x", swipeUp = "\"", swipeDown = "C-x"),
@@ -85,7 +84,9 @@ object PresetProvider {
                 key("v", swipeUp = "/", swipeRight = "|", swipeDown = "C-d"),
                 key("b", swipeUp = "\\"), key("n", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
-                key(",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
+                key(",", swipeUp = "<", swipeRight = ">"),
+                key(".", swipeUp = "\uFF01", swipeDown = "\u3002"),
+                KeyDef("\u21B5", action = KeyAction.Enter),
             ),
             // Row 4: Modifiers (shared)
             modifierRow,
@@ -109,16 +110,16 @@ object PresetProvider {
                 key("i", swipeUp = "8"), key("o", swipeUp = "9"),
                 key("p", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
-            // Row 2: A-;
+            // Row 2: A-L + BS
             listOf(
                 key("a", swipeUp = "@", swipeLeft = "{", swipeRight = "}"),
                 key("s", swipeUp = "#"), key("d", swipeUp = "$"),
                 key("f", swipeUp = "%"), key("g", swipeUp = "&"),
                 key("h", swipeUp = "*"), key("j", swipeUp = "("),
                 key("k", swipeUp = ")"), key("l", swipeUp = "-", swipeRight = "="),
-                key(";", swipeUp = ":", swipeRight = "'"),
+                KeyDef("\u232B", action = KeyAction.Backspace, swipeUp = ":", swipeRight = ";", swipeLeft = "\u232Bw"),
             ),
-            // Row 3: Z-,
+            // Row 3: Z-. + Enter
             listOf(
                 key("z", swipeUp = "!", swipeLeft = "\""),
                 key("x", swipeUp = "\"", swipeRight = "'"),
@@ -126,7 +127,9 @@ object PresetProvider {
                 key("v", swipeUp = "/", swipeRight = "|"),
                 key("b", swipeUp = "\\"), key("n", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
-                key(",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
+                key(",", swipeUp = "<", swipeRight = ">"),
+                key(".", swipeUp = "\uFF01", swipeDown = "\u3002"),
+                KeyDef("\u21B5", action = KeyAction.Enter),
             ),
             // Row 4: Modifiers (shared)
             modifierRow,
@@ -149,7 +152,7 @@ object PresetProvider {
                 key("i", swipeUp = "8"), key("o", swipeUp = "9"),
                 key("p", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
-            // Row 2: A-; with Ctrl shortcuts on swipes
+            // Row 2: A-L + BS with Ctrl shortcuts on swipes
             listOf(
                 KeyDef("a", swipeUp = "@", swipeLeft = "{", swipeRight = "}",
                     longPress = null, action = KeyAction.Text("a"),
@@ -161,9 +164,9 @@ object PresetProvider {
                 key("h", swipeUp = "*"), key("j", swipeUp = "("),
                 KeyDef("k", swipeUp = ")", action = KeyAction.Text("k"),
                     swipeDown = "C-k"),
-                key("l", swipeUp = "-", swipeRight = "="),
+                KeyDef("\u232B", action = KeyAction.Backspace, swipeUp = ":", swipeRight = ";", swipeLeft = "\u232Bw"),
             ),
-            // Row 3: Z-, with Ctrl+Y accessible
+            // Row 3: Z-. + Enter
             listOf(
                 key("z", swipeUp = "!", swipeLeft = "\""),
                 key("x", swipeUp = "\"", swipeRight = "'"),
@@ -171,18 +174,21 @@ object PresetProvider {
                 key("v", swipeUp = "/", swipeRight = "|"),
                 key("b", swipeUp = "\\"), key("n", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
-                key(",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
+                key(",", swipeUp = "<", swipeRight = ">"),
+                key(".", swipeUp = "\uFF01", swipeDown = "\u3002"),
+                KeyDef("\u21B5", action = KeyAction.Enter),
             ),
-            // Row 4: Ctrl key replaces Shift position, rest shared
+            // Row 4: Ctrl + modifiers
             listOf(
                 KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT)),
-                KeyDef("Tab", action = KeyAction.Tab),
                 KeyDef("Fn", action = KeyAction.Fn),
-                KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 1.5f),
-                KeyDef("\u3042a", action = KeyAction.ToggleJapanese),
-                KeyDef("\u232B", action = KeyAction.Backspace, widthMultiplier = 1.1f),
-                KeyDef("\u21B5", action = KeyAction.Enter, widthMultiplier = 1.1f),
-                KeyDef("GL", action = KeyAction.SwitchIme),
+                KeyDef("\u21E7", action = KeyAction.Shift),
+                KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
+                    swipeUp = "Tab", swipeLeft = "\u30FC"),
+                KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
+                KeyDef("\uFF1F", label = "\uFF1F", swipeUp = "?", swipeDown = "\uFF01"),
+                KeyDef("\u21B5", action = KeyAction.Enter),
+                KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),
             ),
         ),
     )
@@ -204,24 +210,26 @@ object PresetProvider {
                 key("c", swipeUp = "8"), key("r", swipeUp = "9"),
                 key("l", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
-            // Row 2: aoeuidhtns
+            // Row 2: aoeuidhtn + BS
             listOf(
                 key("a", swipeUp = "@", swipeLeft = "{", swipeRight = "}"),
                 key("o", swipeUp = "#"), key("e", swipeUp = "$"),
                 key("u", swipeUp = "%"), key("i", swipeUp = "&"),
                 key("d", swipeUp = "*"), key("h", swipeUp = "("),
                 key("t", swipeUp = ")"), key("n", swipeUp = "-", swipeRight = "="),
-                key("s", swipeUp = ":", swipeRight = ";"),
+                KeyDef("\u232B", action = KeyAction.Backspace, swipeUp = ":", swipeRight = "s", swipeLeft = "\u232Bw"),
             ),
-            // Row 3: ;qjkxbmwvz (10 keys → 8 visible + v,z on swipes)
+            // Row 3: ;qjkxbm, + . + Enter (w,v,z on swipes)
             listOf(
                 key(";", swipeUp = "!", swipeDown = "z"),
                 key("q", swipeUp = "\"", swipeRight = "'"),
                 key("j", swipeUp = "'"),
                 key("k", swipeUp = "/", swipeRight = "|"),
                 key("x", swipeUp = "\\"), key("b", swipeUp = "?"),
-                key("m", swipeUp = "+", swipeRight = "="),
-                key("w", swipeUp = "<", swipeRight = ">", swipeDown = "v"),
+                key("m", swipeUp = "+", swipeRight = "=", swipeDown = "w"),
+                key(",", swipeUp = "<", swipeDown = "v"),
+                key(".", swipeUp = "\uFF01", swipeDown = "\u3002"),
+                KeyDef("\u21B5", action = KeyAction.Enter),
             ),
             // Row 4: Modifiers (shared)
             modifierRow,
@@ -244,16 +252,16 @@ object PresetProvider {
                 key("u", swipeUp = "8"), key("y", swipeUp = "9"),
                 key(";", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
-            // Row 2: arstdhneio
+            // Row 2: arstdhnei + BS
             listOf(
                 key("a", swipeUp = "@", swipeLeft = "{", swipeRight = "}"),
                 key("r", swipeUp = "#"), key("s", swipeUp = "$"),
                 key("t", swipeUp = "%"), key("d", swipeUp = "&"),
                 key("h", swipeUp = "*"), key("n", swipeUp = "("),
                 key("e", swipeUp = ")"), key("i", swipeUp = "-", swipeRight = "="),
-                key("o", swipeUp = ":", swipeRight = "'"),
+                KeyDef("\u232B", action = KeyAction.Backspace, swipeUp = ":", swipeRight = "o", swipeLeft = "\u232Bw"),
             ),
-            // Row 3: zxcvbkm,.
+            // Row 3: zxcvbkm,. + Enter
             listOf(
                 key("z", swipeUp = "!", swipeLeft = "\""),
                 key("x", swipeUp = "\"", swipeRight = "'"),
@@ -261,7 +269,9 @@ object PresetProvider {
                 key("v", swipeUp = "/", swipeRight = "|"),
                 key("b", swipeUp = "\\"), key("k", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
-                key(",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
+                key(",", swipeUp = "<", swipeRight = ">"),
+                key(".", swipeUp = "\uFF01", swipeDown = "\u3002"),
+                KeyDef("\u21B5", action = KeyAction.Enter),
             ),
             // Row 4: Modifiers (shared)
             modifierRow,

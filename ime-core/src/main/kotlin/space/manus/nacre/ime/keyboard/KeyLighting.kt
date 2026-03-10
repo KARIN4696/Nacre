@@ -96,11 +96,20 @@ class KeyLighting(context: Context) {
         matrixColumns[column] = now
     }
 
+    // WASD highlight: fluorescent orange always-on
+    private val wasdKeys = setOf("w", "a", "s", "d")
+    private val FLUORESCENT_ORANGE = Color(0xFFFF6600)
+
     /**
      * Get the border/glow color for a specific key at the current time.
      * Returns Color.Transparent if no lighting should be shown.
      */
     fun getKeyColor(keyId: String, row: Int, column: Int): Color {
+        // WASD always glows fluorescent orange
+        if (keyId in wasdKeys) {
+            return FLUORESCENT_ORANGE.copy(alpha = 0.85f)
+        }
+
         val now = animationTick
         return when (mode) {
             Mode.OFF -> Color.Transparent

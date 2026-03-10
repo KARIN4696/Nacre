@@ -62,6 +62,7 @@ class ModelDownloader(private val context: Context) {
         return mapOf(
             "whisper" to File(dir, "whisper-base.bin").exists(),
             "llm" to File(dir, "gemma-3-1b-q4.gguf").exists(),
+            "kenlm" to File(dir, "japanese-5gram.klm").exists(),
         )
     }
 

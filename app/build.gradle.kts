@@ -39,6 +39,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Prevent aapt2 from re-compressing already-gzipped assets
+    androidResources {
+        noCompress += listOf("gz", "tsv.gz", "bin")
+    }
 }
 
 dependencies {

@@ -59,10 +59,47 @@ else()
     set(LLAMA_AVAILABLE FALSE)
 endif()
 
+# --- KenLM ---
+# Source: https://github.com/kpu/kenlm
+# Place kenlm source (lm/ + util/) in ime-ai/src/main/cpp/kenlm/
+set(KENLM_DIR ${CMAKE_SOURCE_DIR}/kenlm)
+if(EXISTS ${KENLM_DIR}/lm/model.cc)
+    # Collect source files, excluding tests, mains, and benchmarks
+    file(GLOB KENLM_LM_SRCS ${KENLM_DIR}/lm/*.cc)
+    file(GLOB KENLM_UTIL_SRCS ${KENLM_DIR}/util/*.cc)
+    file(GLOB KENLM_DCONV_SRCS ${KENLM_DIR}/util/double-conversion/*.cc)
+
+    list(FILTER KENLM_LM_SRCS EXCLUDE REGEX ".*_main\\.cc$")
+    list(FILTER KENLM_LM_SRCS EXCLUDE REGEX ".*_test\\.cc$")
+    list(FILTER KENLM_LM_SRCS EXCLUDE REGEX ".*benchmark.*\\.cc$")
+    list(FILTER KENLM_UTIL_SRCS EXCLUDE REGEX ".*_main\\.cc$")
+    list(FILTER KENLM_UTIL_SRCS EXCLUDE REGEX ".*_test\\.cc$")
+    list(FILTER KENLM_UTIL_SRCS EXCLUDE REGEX ".*benchmark.*\\.cc$")
+
+    add_library(kenlm STATIC
+        ${KENLM_LM_SRCS}
+        ${KENLM_UTIL_SRCS}
+        ${KENLM_DCONV_SRCS}
+    )
+    target_include_directories(kenlm PUBLIC ${KENLM_DIR})
+    target_compile_definitions(kenlm PRIVATE
+        KENLM_MAX_ORDER=5
+        HAVE_POSIX_MEMALIGN
+        NDEBUG
+    )
+    # Suppress some warnings in KenLM code
+    target_compile_options(kenlm PRIVATE -Wno-unused-parameter -Wno-sign-compare)
+    set(KENLM_AVAILABLE TRUE)
+else()
+    message(WARNING "KenLM sources not found at ${KENLM_DIR}. Building stub.")
+    set(KENLM_AVAILABLE FALSE)
+endif()
+
 # --- JNI Bridge ---
 add_library(nacre-ai SHARED
     nacre_whisper_jni.cpp
     nacre_llama_jni.cpp
+    nacre_kenlm_jni.cpp
 )
 
 target_include_directories(nacre-ai PRIVATE
@@ -85,4 +122,9 @@ endif()
 if(LLAMA_AVAILABLE)
     target_link_libraries(nacre-ai llama)
     target_compile_definitions(nacre-ai PRIVATE LLAMA_AVAILABLE)
+endif()
+
+if(KENLM_AVAILABLE)
+    target_link_libraries(nacre-ai kenlm)
+    target_compile_definitions(nacre-ai PRIVATE KENLM_AVAILABLE)
 endif()

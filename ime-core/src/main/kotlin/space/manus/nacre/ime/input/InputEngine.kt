@@ -9,9 +9,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.util.Log
 import space.manus.nacre.config.KeyAction
 import space.manus.nacre.config.KeyDef
 import space.manus.nacre.ime.NacreInputMethodService
@@ -24,6 +28,14 @@ class InputEngine(private val service: NacreInputMethodService) {
     private var editorInfo: EditorInfo? = null
     private val japaneseEngine = JapaneseEngine()
     private var composingText: String = ""
+    private var predictionJob: Job? = null
+
+    // LLM-based candidate reranking (optional, async)
+    val llmReranker = LlmReranker(service)
+
+    // Observable composing kana for CandidateBar display
+    var composingKana by mutableStateOf("")
+        private set
 
     // Conversion state (observable by Compose)
     var candidates = mutableStateListOf<ConversionCandidate>()
@@ -33,6 +45,11 @@ class InputEngine(private val service: NacreInputMethodService) {
     var isConverting by mutableStateOf(false)
         private set
 
+    // Segment boundary adjustment (文節区切り修正)
+    // During conversion, segmentBoundary = number of kana chars in current first segment
+    private var segmentBoundary: Int = 0
+    private var fullKana: String = "" // Full kana being converted
+
     // Password field state (observable by Compose for CandidateBar hiding)
     var isPasswordField by mutableStateOf(false)
         private set
@@ -41,36 +58,67 @@ class InputEngine(private val service: NacreInputMethodService) {
     @Volatile
     var dictionary: DictionaryProvider? = null
 
+    // Debug: observable dictionary load state for UI
+    var dictionaryLoaded by mutableStateOf(false)
+
+    // Debug: last prediction info
+    var debugInfo by mutableStateOf("")
+
+    /**
+     * Called when dictionary finishes loading. If there's active composing text,
+     * regenerate predictions so candidates appear retroactively.
+     */
+    fun refreshPredictionsIfNeeded() {
+        if (composingText.isNotEmpty() && !isConverting) {
+            val kana = japaneseEngine.romajiToHiragana(composingText)
+            Log.d("InputEngine", "refreshPredictionsIfNeeded: kana=$kana")
+            updatePredictions(kana)
+        }
+    }
+
     fun onStartInput(info: EditorInfo?) {
         editorInfo = info
         composingText = ""
+        composingKana = ""
         japaneseEngine.reset()
         clearCandidates()
 
         // EditorInfo handling: disable Japanese for password/number fields
         if (info != null) {
-            val inputType = info.inputType and InputType.TYPE_MASK_CLASS
-            val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+            val rawInputType = info.inputType
+            val inputType = rawInputType and InputType.TYPE_MASK_CLASS
+            val variation = rawInputType and InputType.TYPE_MASK_VARIATION
 
-            val isPassword = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+            // Only check password variation when the class is actually TYPE_CLASS_TEXT
+            // Termux uses TYPE_CLASS_TEXT with TYPE_TEXT_VARIATION_NORMAL (0x0) or TYPE_NULL
+            val isTextClass = inputType == InputType.TYPE_CLASS_TEXT
+            val isPassword = isTextClass && (
+                variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+            )
             val isNumber = inputType == InputType.TYPE_CLASS_NUMBER ||
                 inputType == InputType.TYPE_CLASS_PHONE
-            val isEmail = variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+            val isEmail = isTextClass && (
+                variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
-            val isUri = variation == InputType.TYPE_TEXT_VARIATION_URI
+            )
+            val isUri = isTextClass && variation == InputType.TYPE_TEXT_VARIATION_URI
 
-            val noSuggestions = info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0
+            val noSuggestions = rawInputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0
+
+            // debugInfo removed — no longer shown in candidate bar
 
             // SPEC: Password field — disable prediction, history, AI, hide candidate bar
             isPasswordField = isPassword
 
-            if (isPassword || isNumber || isEmail || isUri || noSuggestions) {
+            if (isPassword || isNumber || isEmail || isUri) {
                 if (service.layerManager.isJapanese) {
                     service.layerManager.toggleJapanese()
                 }
             }
+            // Note: noSuggestions flag alone does NOT disable Japanese
+            // (e.g. Termux uses TYPE_TEXT_FLAG_NO_SUGGESTIONS but user still wants kana)
         } else {
             isPasswordField = false
         }
@@ -105,6 +153,24 @@ class InputEngine(private val service: NacreInputMethodService) {
             return
         }
 
+        // "ToggleJa" swipe = Toggle Japanese input
+        if (text == "ToggleJa") {
+            processAction(KeyAction.ToggleJapanese)
+            return
+        }
+
+        // "GL" swipe = Switch IME
+        if (text == "GL") {
+            processAction(KeyAction.SwitchIme)
+            return
+        }
+
+        // "Tab" swipe = send Tab key
+        if (text == "Tab") {
+            processAction(KeyAction.Tab)
+            return
+        }
+
         // BS swipe-left = word delete
         if (text == "\u232Bw" && keyDef.action is KeyAction.Backspace) {
             val ic = service.currentInputConnection ?: return
@@ -130,6 +196,23 @@ class InputEngine(private val service: NacreInputMethodService) {
             return
         }
 
+        // In Japanese mode, route "-" and "ー" through Japanese input
+        // so they join the composing text as long vowel mark
+        if (service.layerManager.isJapanese && (text == "-" || text == "ー")) {
+            val ic = service.currentInputConnection ?: return
+            if (text == "ー") {
+                // Direct kana: append to composing text as-is
+                composingText += "-"  // store as romaji "-" so engine converts to ー
+                val kana = japaneseEngine.romajiToHiragana(composingText)
+                composingKana = kana
+                ic.setComposingText(kana, 1)
+                updatePredictions(kana)
+            } else {
+                processJapaneseInput(text, ic)
+            }
+            return
+        }
+
         // Commit any active composition before inserting swipe text
         val ic = service.currentInputConnection
         if (ic != null && composingText.isNotEmpty()) {
@@ -139,7 +222,18 @@ class InputEngine(private val service: NacreInputMethodService) {
                 finishComposing(ic)
             }
         }
-        commitText(text)
+
+        // Japanese mode: auto-convert punctuation to fullwidth
+        if (service.layerManager.isJapanese) {
+            val jaSwipe = when (text) {
+                "?" -> { commitTextWithSymbol(ic ?: service.currentInputConnection ?: return, "？", listOf("？", "?", "⁉", "❓")); return }
+                "!" -> { commitTextWithSymbol(ic ?: service.currentInputConnection ?: return, "！", listOf("！", "!", "‼", "❗")); return }
+                else -> text
+            }
+            commitText(jaSwipe)
+        } else {
+            commitText(text)
+        }
     }
 
     fun processAction(action: KeyAction) {
@@ -152,7 +246,28 @@ class InputEngine(private val service: NacreInputMethodService) {
                     commitSelectedCandidate(ic)
                 }
                 if (service.layerManager.isJapanese) {
-                    processJapaneseInput(action.text.lowercase(), ic)
+                    // Japanese punctuation/symbols: commit composing first, then insert directly
+                    val jaText = when (action.text) {
+                        "," -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("、", 1); showSymbolCandidates("、", listOf("、", "，", "‥")); return }
+                        "." -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("。", 1); showSymbolCandidates("。", listOf("。", "…", "‥", "・", ".")); return }
+                        "?", "？" -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("？", 1); showSymbolCandidates("？", listOf("？", "?", "⁉", "❓")); return }
+                        "!", "！" -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("！", 1); showSymbolCandidates("！", listOf("！", "!", "‼", "❗")); return }
+                        "(" -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("（", 1); showSymbolCandidates("（", listOf("（", "「", "『", "【", "〈", "《", "[", "(")); return }
+                        ")" -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("）", 1); showSymbolCandidates("）", listOf("）", "」", "』", "】", "〉", "》", "]", ")")); return }
+                        "[" -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("「", 1); showSymbolCandidates("「", listOf("「", "『", "【", "〈", "《", "（", "[")); return }
+                        "]" -> { if (composingText.isNotEmpty()) finishComposing(ic); ic.commitText("」", 1); showSymbolCandidates("」", listOf("」", "』", "】", "〉", "》", "）", "]")); return }
+                        "ー" -> {
+                            // Long vowel mark: append to composing text as "-"
+                            composingText += "-"
+                            val kana = japaneseEngine.romajiToHiragana(composingText)
+                            composingKana = kana
+                            ic.setComposingText(kana, 1)
+                            updatePredictions(kana)
+                            return
+                        }
+                        else -> action.text.lowercase()
+                    }
+                    processJapaneseInput(jaText, ic)
                 } else {
                     val text = if (service.layerManager.isShifted) {
                         action.text.uppercase()
@@ -174,10 +289,12 @@ class InputEngine(private val service: NacreInputMethodService) {
                     // Remove one kana unit worth of romaji
                     composingText = removeLastKanaUnit(composingText)
                     if (composingText.isEmpty()) {
+                        composingKana = ""
                         ic.finishComposingText()
                         clearCandidates()
                     } else {
                         val kana = japaneseEngine.romajiToHiragana(composingText)
+                        composingKana = kana
                         ic.setComposingText(kana, 1)
                         updatePredictions(kana)
                     }
@@ -187,7 +304,10 @@ class InputEngine(private val service: NacreInputMethodService) {
             }
 
             is KeyAction.Enter -> {
-                if (isConverting) {
+                if (symbolReplace != null) {
+                    // Symbol candidates showing (e.g. after 、。) — just dismiss
+                    clearCandidates()
+                } else if (isConverting) {
                     commitSelectedCandidate(ic)
                 } else if (composingText.isNotEmpty()) {
                     finishComposing(ic)
@@ -239,6 +359,7 @@ class InputEngine(private val service: NacreInputMethodService) {
                     cancelConversion(ic)
                 } else if (composingText.isNotEmpty()) {
                     composingText = ""
+        composingKana = ""
                     ic.finishComposingText()
                     clearCandidates()
                 } else {
@@ -260,6 +381,12 @@ class InputEngine(private val service: NacreInputMethodService) {
                 if (composingText.isNotEmpty()) finishComposing(ic)
                 japaneseEngine.reset()
                 service.layerManager.toggleJapanese()
+            }
+
+            is KeyAction.Emoji -> {
+                if (isConverting) commitSelectedCandidate(ic)
+                if (composingText.isNotEmpty()) finishComposing(ic)
+                service.layerManager.isEmojiRequested = true
             }
 
             is KeyAction.KeyCode -> {
@@ -292,11 +419,30 @@ class InputEngine(private val service: NacreInputMethodService) {
         val ic = service.currentInputConnection ?: return
         if (index in candidates.indices) {
             val candidate = candidates[index]
+
+            // Symbol replacement: delete the just-committed symbol and insert the selected one
+            val replacing = symbolReplace
+            if (replacing != null) {
+                ic.deleteSurroundingText(replacing.length, 0)
+                ic.commitText(candidate.surface, 1)
+                clearCandidates()
+                return
+            }
+
+            // Clear composing text first to avoid double input
+            // (commitText auto-finishes composing, causing composing + candidate duplication)
+            if (composingText.isNotEmpty()) {
+                ic.setComposingText("", 0)
+            }
+            ic.finishComposingText()
             ic.commitText(candidate.surface, 1)
             dictionary?.recordSelection(candidate)
             composingText = ""
+            composingKana = ""
             japaneseEngine.reset()
             clearCandidates()
+            // Show next-word predictions after committing
+            showNextWordPredictions()
         }
     }
 
@@ -305,12 +451,15 @@ class InputEngine(private val service: NacreInputMethodService) {
     private fun processJapaneseInput(text: String, ic: InputConnection) {
         composingText += text
         val kana = japaneseEngine.romajiToHiragana(composingText)
+        composingKana = kana
         ic.setComposingText(kana, 1)
         updatePredictions(kana)
     }
 
     private fun startConversion(ic: InputConnection) {
-        val kana = japaneseEngine.romajiToHiragana(composingText)
+        val kana = japaneseEngine.romajiToHiragana(composingText, finalize = true)
+        fullKana = kana
+        segmentBoundary = kana.length // Default: entire kana is one segment
         val dict = dictionary
         if (dict != null) {
             val results = dict.convert(kana)
@@ -327,6 +476,57 @@ class InputEngine(private val service: NacreInputMethodService) {
         finishComposing(ic)
     }
 
+    /**
+     * Shrink or extend the first segment boundary during conversion.
+     * Left = shrink (fewer kana in first segment), Right = extend.
+     * Re-converts with new boundary and shows candidates for that segment.
+     */
+    fun adjustSegmentBoundary(direction: SwipeDirection) {
+        if (!isConverting || fullKana.isEmpty()) return
+        val ic = service.currentInputConnection ?: return
+        val dict = dictionary ?: return
+
+        when (direction) {
+            SwipeDirection.Left -> {
+                if (segmentBoundary > 1) segmentBoundary--
+            }
+            SwipeDirection.Right -> {
+                if (segmentBoundary < fullKana.length) segmentBoundary++
+            }
+            else -> return
+        }
+
+        // Convert only the first segment
+        val firstSegKana = fullKana.substring(0, segmentBoundary)
+        val restKana = fullKana.substring(segmentBoundary)
+
+        val firstResults = dict.convert(firstSegKana)
+        val firstSurface = firstResults.firstOrNull()?.surface ?: firstSegKana
+
+        // Build display: converted first segment + remaining kana
+        val displayText = firstSurface + restKana
+
+        // Update candidates for the first segment only
+        candidates.clear()
+        for (r in firstResults) {
+            // Append remaining kana to each candidate surface for full display
+            candidates.add(ConversionCandidate(
+                surface = r.surface + restKana,
+                reading = fullKana,
+                cost = r.cost,
+            ))
+        }
+        // Also add the first segment as hiragana + rest
+        val allHiragana = fullKana
+        if (candidates.none { it.surface == allHiragana }) {
+            candidates.add(ConversionCandidate(surface = allHiragana, reading = fullKana, cost = 9999))
+        }
+
+        selectedCandidateIndex = 0
+        ic.setComposingText(displayText, 1)
+        service.feedbackManager.onSwipe()
+    }
+
     private fun nextCandidate(ic: InputConnection) {
         if (candidates.isEmpty()) return
         selectedCandidateIndex = (selectedCandidateIndex + 1) % candidates.size
@@ -339,12 +539,15 @@ class InputEngine(private val service: NacreInputMethodService) {
             ic.commitText(candidate.surface, 1)
             dictionary?.recordSelection(candidate)
         } else {
-            val kana = japaneseEngine.romajiToHiragana(composingText)
+            val kana = japaneseEngine.romajiToHiragana(composingText, finalize = true)
             ic.commitText(kana, 1)
         }
         composingText = ""
+        composingKana = ""
         japaneseEngine.reset()
         clearCandidates()
+        // Show next-word predictions based on context
+        showNextWordPredictions()
     }
 
     private fun cancelConversion(ic: InputConnection) {
@@ -364,17 +567,75 @@ class InputEngine(private val service: NacreInputMethodService) {
             clearCandidates()
             return
         }
-        val predictions = dict.predict(kana)
-        candidates.clear()
-        candidates.addAll(predictions)
-        isConverting = false
-        selectedCandidateIndex = -1
+        val romaji = composingText // Pass raw romaji for English candidate matching
+        // Cancel previous prediction job — debounce for fast typing
+        predictionJob?.cancel()
+        predictionJob = scope.launch {
+            // Debounce: wait 50ms before starting prediction to batch rapid keystrokes
+            kotlinx.coroutines.delay(50L)
+            // Run dictionary lookup off the main thread
+            val predictions = withContext(Dispatchers.Default) {
+                dict.predict(kana, romaji)
+            }
+            // Update in one snapshot to avoid Compose seeing empty list
+            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                candidates.clear()
+                candidates.addAll(predictions)
+                isConverting = false
+                selectedCandidateIndex = -1
+            }
+
+            // Async LLM reranking (non-blocking — updates candidates in-place when done)
+            if (predictions.size > 1) {
+                val precedingText = service.currentInputConnection
+                    ?.getTextBeforeCursor(50, 0)?.toString() ?: ""
+                llmReranker.rerankAsync(kana, predictions, precedingText) { reranked ->
+                    // Only apply if candidates haven't changed since we started
+                    if (candidates.size == reranked.size &&
+                        candidates.firstOrNull()?.reading == reranked.firstOrNull()?.reading
+                    ) {
+                        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                            candidates.clear()
+                            candidates.addAll(reranked)
+                            selectedCandidateIndex = -1
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Show next-word predictions based on recently committed context.
+     * Uses bigram/trigram history to suggest likely follow-up words.
+     */
+    private fun showNextWordPredictions() {
+        if (isPasswordField) return
+        if (!service.layerManager.isJapanese) return
+        val nacrDict = dictionary as? NacreDictionary ?: return
+        predictionJob?.cancel()
+        predictionJob = scope.launch {
+            val predictions = withContext(Dispatchers.Default) {
+                nacrDict.predictNextWord(limit = 8)
+            }
+            if (predictions.isNotEmpty() && composingText.isEmpty()) {
+                androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                    candidates.clear()
+                    candidates.addAll(predictions)
+                    isConverting = false
+                    selectedCandidateIndex = -1
+                }
+            }
+        }
     }
 
     private fun finishComposing(ic: InputConnection) {
-        val kana = japaneseEngine.romajiToHiragana(composingText)
+        val kana = japaneseEngine.romajiToHiragana(composingText, finalize = true)
         ic.commitText(kana, 1)
+        // Update bigram context
+        (dictionary as? NacreDictionary)?.updateContext(kana)
         composingText = ""
+        composingKana = ""
         japaneseEngine.reset()
         clearCandidates()
     }
@@ -383,25 +644,57 @@ class InputEngine(private val service: NacreInputMethodService) {
         candidates.clear()
         selectedCandidateIndex = -1
         isConverting = false
+        symbolReplace = null
+    }
+
+    // Symbol candidate state: when non-null, tapping a candidate replaces the last committed symbol
+    private var symbolReplace: String? = null
+
+    /** Commit a fullwidth symbol and show alternatives */
+    private fun commitTextWithSymbol(ic: InputConnection, symbol: String, alternatives: List<String>) {
+        ic.commitText(symbol, 1)
+        showSymbolCandidates(symbol, alternatives)
+    }
+
+    /**
+     * Show symbol alternatives in the candidate bar.
+     * Tapping a candidate replaces the just-committed symbol.
+     */
+    private fun showSymbolCandidates(committed: String, alternatives: List<String>) {
+        symbolReplace = committed
+        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+            candidates.clear()
+            candidates.addAll(alternatives.map { sym ->
+                ConversionCandidate(surface = sym, reading = committed, cost = 0)
+            })
+            selectedCandidateIndex = 0 // First one is the already-committed symbol
+            isConverting = false
+        }
     }
 
     /**
      * Remove the last kana unit from romaji composing text.
-     * E.g. "kyo" → "" (きょ is one unit), "ka" → "" (か is one unit),
-     * "kak" → "ka" (trailing consonant), "kakiko" → "kaki" (remove こ)
+     * Compares kana output to find how many romaji chars produce the last kana.
+     * E.g. "ka" → "" (か), "kyo" → "" (きょ), "kakiko" → "kaki" (remove こ)
+     * Trailing unconverted consonant: "kak" → "ka" (remove trailing k)
      */
     private fun removeLastKanaUnit(romaji: String): String {
         if (romaji.isEmpty()) return ""
-        // Try progressively longer suffixes to find one that converts to kana
-        for (len in minOf(4, romaji.length) downTo 1) {
-            val suffix = romaji.substring(romaji.length - len)
-            val kana = japaneseEngine.romajiToHiragana(suffix)
-            // If the suffix fully converted (no leftover romaji), it's a kana unit
-            if (kana.isNotEmpty() && kana.all { it.code > 0x3000 }) {
-                return romaji.substring(0, romaji.length - len)
+
+        val currentKana = japaneseEngine.romajiToHiragana(romaji)
+
+        // Try removing 1, 2, 3, 4 chars from the end — find the shortest removal
+        // that actually changes the kana output (i.e., removes one kana unit)
+        for (drop in 1..minOf(4, romaji.length)) {
+            val shortened = romaji.dropLast(drop)
+            val shortenedKana = japaneseEngine.romajiToHiragana(shortened)
+            // Check if we removed exactly one kana (or trailing unconverted chars)
+            if (shortenedKana.length < currentKana.length) {
+                return shortened
             }
         }
-        // Fallback: just drop last char
+
+        // Fallback: drop 1 char
         return romaji.dropLast(1)
     }
 
@@ -465,6 +758,7 @@ class InputEngine(private val service: NacreInputMethodService) {
     }
 
     fun destroy() {
+        llmReranker.destroy()
         scope.cancel()
     }
 
@@ -480,10 +774,11 @@ data class ConversionCandidate(
     val surface: String,
     val reading: String,
     val cost: Int = 0,
+    val segments: List<String> = emptyList(),
 )
 
 interface DictionaryProvider {
     fun convert(kana: String): List<ConversionCandidate>
-    fun predict(kana: String): List<ConversionCandidate>
+    fun predict(kana: String, romaji: String = ""): List<ConversionCandidate>
     fun recordSelection(candidate: ConversionCandidate)
 }

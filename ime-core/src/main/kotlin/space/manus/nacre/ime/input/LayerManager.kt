@@ -20,10 +20,11 @@ class LayerManager {
     var isShifted by mutableStateOf(false)
         private set
 
-    var isJapanese by mutableStateOf(false)
+    var isJapanese by mutableStateOf(true)
         private set
 
     var isCommandPaletteRequested by mutableStateOf(false)
+    var isEmojiRequested by mutableStateOf(false)
 
     var activePreset: PresetProvider.PresetType = PresetProvider.PresetType.Default
 
@@ -40,19 +41,30 @@ class LayerManager {
 
     /** Called when Fn key is pressed down (hold = temporary switch) */
     fun fnDown() {
-        if (currentLayer == Layer.Base) {
-            fnHeld = true
-            currentLayer = Layer.Fn1
+        when (currentLayer) {
+            Layer.Base -> {
+                fnHeld = true
+                currentLayer = Layer.Fn1
+            }
+            Layer.Fn1, Layer.Fn2 -> {
+                // Already on Fn layer — mark as held so fnUp can toggle back
+                fnHeld = true
+            }
         }
     }
 
     /** Called when Fn key is released. If held, return to base. */
     fun fnUp(wasTap: Boolean) {
         if (fnHeld) {
+            val wasLayer = currentLayer
             fnHeld = false
             if (wasTap) {
-                // Short tap: toggle (stay on Fn1)
-                // Already on Fn1 from fnDown, keep it
+                // Short tap: toggle
+                when (wasLayer) {
+                    Layer.Base -> currentLayer = Layer.Fn1
+                    Layer.Fn1 -> currentLayer = Layer.Base
+                    Layer.Fn2 -> currentLayer = Layer.Base  // Fn2→Base on Fn tap
+                }
             } else {
                 // Was held: return to base
                 currentLayer = Layer.Base

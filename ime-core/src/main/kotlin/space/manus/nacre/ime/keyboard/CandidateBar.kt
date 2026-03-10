@@ -2,6 +2,8 @@ package space.manus.nacre.ime.keyboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +15,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -20,27 +25,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import space.manus.nacre.ime.NacreInputMethodService
 import space.manus.nacre.ime.input.ConversionCandidate
-
-private val BarBackground = Color(0xFF16213E)
-private val CandidateBg = Color(0xFF2A2A4A)
-private val CandidateSelectedBg = Color(0xFF00D4AA)
-private val CandidateText = Color(0xFFE0E0E0)
-private val CandidateSelectedText = Color(0xFF0F0F23)
+import space.manus.nacre.ime.input.SwipeDirection
+import kotlin.math.abs
 
 @Composable
 fun CandidateBar(
     service: NacreInputMethodService,
     modifier: Modifier = Modifier,
 ) {
+    val theme = service.currentTheme
+    val barBg = Color(theme.candidateBackground.toInt())
+    val accent = Color(theme.accent.toInt())
     val candidates = service.inputEngine.candidates
     val selectedIndex = service.inputEngine.selectedCandidateIndex
+    val dictLoaded = service.inputEngine.dictionaryLoaded
+    val isConverting = service.inputEngine.isConverting
 
     // SPEC: hide candidate bar in password fields
-    if (candidates.isEmpty() || service.inputEngine.isPasswordField) return
+    if (service.inputEngine.isPasswordField) {
+        Spacer(modifier = modifier.fillMaxWidth().height(28.dp).background(barBg))
+        return
+    }
 
     val scrollState = rememberScrollState()
+    val swipeThresholdPx = with(LocalDensity.current) { 20.dp.toPx() }
 
-    // Reset scroll when candidates change
     LaunchedEffect(candidates.toList()) {
         scrollState.scrollTo(0)
     }
@@ -48,28 +57,88 @@ fun CandidateBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(40.dp)
-            .background(BarBackground)
+            .height(28.dp)
+            .background(barBg)
+            .then(
+                if (isConverting) {
+                    // During conversion: detect left/right swipe for segment boundary adjustment
+                    Modifier.pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            var totalX = 0f
+                            var totalY = 0f
+                            var handled = false
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (change.pressed) {
+                                    val delta = change.positionChange()
+                                    totalX += delta.x
+                                    totalY += delta.y
+                                    change.consume()
+
+                                    // Trigger segment adjustment on sufficient horizontal swipe
+                                    if (!handled && abs(totalX) > swipeThresholdPx && abs(totalX) > abs(totalY)) {
+                                        handled = true
+                                        val dir = if (totalX > 0) SwipeDirection.Right else SwipeDirection.Left
+                                        service.inputEngine.adjustSegmentBoundary(dir)
+                                    }
+                                } else {
+                                    change.consume()
+                                    break
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .horizontalScroll(scrollState)
-            .padding(horizontal = 4.dp, vertical = 4.dp),
+            .padding(horizontal = 4.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        candidates.forEachIndexed { index, candidate ->
-            CandidateChip(
-                candidate = candidate,
-                isSelected = index == selectedIndex,
-                onClick = {
-                    if (service.inputEngine.isConverting) {
-                        service.inputEngine.selectCandidate(index)
-                    } else {
-                        service.inputEngine.commitCandidate(index)
-                    }
-                },
-                index = index,
+        if (candidates.isEmpty() && !dictLoaded) {
+            Text(
+                text = "辞書loading...",
+                color = Color(0xFF555555),
+                fontSize = 10.sp,
             )
-            if (index < candidates.size - 1) {
-                Spacer(modifier = Modifier.width(4.dp))
+        }
+
+        if (candidates.isNotEmpty()) {
+            // Show segment boundary hint during conversion
+            if (isConverting) {
+                Text(
+                    text = "◀▶",
+                    color = accent.copy(alpha = 0.5f),
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
+
+            candidates.forEachIndexed { index, candidate ->
+                CandidateChip(
+                    candidate = candidate,
+                    isSelected = index == selectedIndex,
+                    onClick = {
+                        if (isConverting) {
+                            service.inputEngine.selectCandidate(index)
+                        } else {
+                            service.inputEngine.commitCandidate(index)
+                        }
+                    },
+                    index = index,
+                    chipBg = Color(theme.keyBackground.toInt()),
+                    chipText = Color(theme.keyText.toInt()),
+                    selectedBg = accent,
+                    selectedText = Color(theme.background.toInt()),
+                )
+                if (index < candidates.size - 1) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
             }
         }
     }
@@ -81,17 +150,21 @@ private fun CandidateChip(
     isSelected: Boolean,
     onClick: () -> Unit,
     index: Int,
+    chipBg: Color,
+    chipText: Color,
+    selectedBg: Color,
+    selectedText: Color,
 ) {
-    val bg = if (isSelected) CandidateSelectedBg else CandidateBg
-    val textColor = if (isSelected) CandidateSelectedText else CandidateText
+    val bg = if (isSelected) selectedBg else chipBg
+    val textColor = if (isSelected) selectedText else chipText
 
     Box(
         modifier = Modifier
-            .height(32.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .height(28.dp)
+            .clip(RoundedCornerShape(4.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .padding(horizontal = 10.dp, vertical = 2.dp)
             .semantics {
                 contentDescription = "候補${index + 1}: ${candidate.surface}"
             },

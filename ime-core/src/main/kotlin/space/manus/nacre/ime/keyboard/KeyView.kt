@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import space.manus.nacre.config.KeyAction
 import space.manus.nacre.config.KeyDef
@@ -33,13 +34,7 @@ import space.manus.nacre.ime.NacreInputMethodService
 import space.manus.nacre.ime.input.SwipeDirection
 import kotlin.math.abs
 
-private val KeyBg = Color(0xFF2A2A4A)
-private val KeyBgPressed = Color(0xFF3A3A5A)
-private val KeyBgFn = Color(0xFF1E3A5A)
-private val KeyBgAction = Color(0xFF00D4AA)
-private val KeyText = Color(0xFFE0E0E0)
-private val KeyTextSwipe = Color(0xFF6666AA)
-private val GlowColor = Color(0xFF00D4AA)
+// Colors are read from service.currentTheme at runtime
 
 @Composable
 fun KeyView(
@@ -48,28 +43,55 @@ fun KeyView(
     modifier: Modifier = Modifier,
     row: Int = 0,
     column: Int = 0,
+    heightDp: Float = 52f,
 ) {
     var isPressed by remember { mutableStateOf(false) }
+    var bsRepeating by remember { mutableStateOf(false) }
     var showLongPressPopup by remember { mutableStateOf(false) }
     var longPressChar by remember { mutableStateOf("") }
+
+    // BS long-press repeat delete
+    LaunchedEffect(bsRepeating) {
+        if (!bsRepeating) return@LaunchedEffect
+        delay(80L) // Initial pause before repeat starts
+        while (bsRepeating) {
+            val wasComposing = service.inputEngine.composingKana.isNotEmpty()
+            service.inputEngine.processAction(KeyAction.Backspace)
+            service.feedbackManager.onKeyPress(KeyAction.Backspace)
+            val isNowEmpty = service.inputEngine.composingKana.isEmpty()
+            if (wasComposing && isNowEmpty) {
+                // Composing text just cleared — pause before deleting committed text
+                delay(400L)
+            } else {
+                delay(50L) // Fast repeat for smooth continuous delete
+            }
+        }
+    }
     val scale by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "keyScale")
     val swipeThresholdPx = with(LocalDensity.current) { 12.dp.toPx() }
 
-    val isActionKey = keyDef.action is KeyAction.Backspace ||
-        keyDef.action is KeyAction.Enter ||
-        keyDef.action is KeyAction.Tab
+    // Theme colors
+    val theme = service.currentTheme
+    val KeyBg = Color(theme.keyBackground.toInt())
+    val KeyBgPressed = Color(theme.keyBackgroundPressed.toInt())
+    val KeyText = Color(theme.keyText.toInt())
+    val KeyTextSwipe = Color(theme.keyTextSwipe.toInt())
+    val GlowColor = Color(theme.accent.toInt())
+    val KeyEdgeLight = Color(theme.surface.toInt())
 
     val isFnKey = keyDef.action is KeyAction.Fn ||
         keyDef.action is KeyAction.FnPage2
 
     val bgColor = when {
         isPressed -> KeyBgPressed
-        isActionKey -> KeyBgAction.copy(alpha = 0.3f)
-        isFnKey -> KeyBgFn
+        isFnKey -> KeyBg
         else -> KeyBg
     }
 
-    val textColor = if (isActionKey) KeyBgAction else KeyText
+    val textColor = when {
+        isPressed -> GlowColor
+        else -> KeyText
+    }
 
     // Mechanical glow effect — combines press glow + lighting engine
     val lighting = service.keyLighting
@@ -81,29 +103,37 @@ fun KeyView(
         label = "glow",
     )
     val pressGlow = if (isPressed) GlowColor.copy(alpha = glowAlpha) else Color.Transparent
-    // Merge press glow with lighting engine color
     val borderColor = if (pressGlow != Color.Transparent) pressGlow
         else if (lightingColor != Color.Transparent) lightingColor
         else Color.Transparent
 
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(6.dp)
 
     Box(
         modifier = modifier
-            .height(52.dp)
-            .padding(1.dp)
+            .then(if (heightDp > 0f) Modifier.height(heightDp.dp) else Modifier.fillMaxHeight())
+            .padding(horizontal = 2.dp, vertical = 1.5.dp)
             .scale(scale)
+            .clip(shape)
+            // Outer shell — bottom edge highlight for mechanical depth
+            .background(if (isPressed) KeyBgPressed else KeyEdgeLight)
+            .padding(bottom = 1.5.dp) // Creates the "keycap edge" effect
             .clip(shape)
             .background(bgColor)
             .then(
                 if (borderColor != Color.Transparent) {
                     Modifier.border(
-                        width = 1.5.dp,
+                        width = 1.dp,
                         color = borderColor,
                         shape = shape,
                     )
                 } else {
-                    Modifier
+                    // Subtle edge border for non-glowing keys
+                    Modifier.border(
+                        width = 0.5.dp,
+                        color = KeyEdgeLight.copy(alpha = 0.5f),
+                        shape = shape,
+                    )
                 }
             )
             .semantics {
@@ -118,6 +148,7 @@ fun KeyView(
                     is KeyAction.SwitchIme -> "Switch keyboard"
                     is KeyAction.Shift -> "Shift"
                     is KeyAction.ToggleJapanese -> "Toggle Japanese"
+                    is KeyAction.Emoji -> "Emoji"
                     else -> keyDef.label
                 }
             }
@@ -154,6 +185,12 @@ fun KeyView(
                                     feedback.onLongPress()
                                     if (keyDef.action is KeyAction.Fn) {
                                         service.inputEngine.processAction(KeyAction.Escape)
+                                    } else if (keyDef.action is KeyAction.Backspace) {
+                                        // BS long press: start repeat delete via isPressed flag
+                                        bsRepeating = true
+                                    } else if (keyDef.action is KeyAction.SwitchIme) {
+                                        // GL long press: open emoji panel
+                                        service.inputEngine.processAction(KeyAction.Emoji)
                                     } else if (keyDef.longPress != null) {
                                         // SPEC: Gboard-style popup bubble for long-press character
                                         longPressChar = keyDef.longPress!!
@@ -184,6 +221,7 @@ fun KeyView(
                         }
                     } finally {
                         isPressed = false
+                        bsRepeating = false
                         showLongPressPopup = false
                     }
 
@@ -236,16 +274,54 @@ fun KeyView(
         contentAlignment = Alignment.Center,
     ) {
         // Main label
-        Text(
-            text = if (service.layerManager.isShifted && keyDef.primary.length == 1) {
+        if (keyDef.action is KeyAction.ToggleJapanese) {
+            // Show "あ" when Japanese active, "A" when English
+            Text(
+                text = if (service.layerManager.isJapanese) "あ" else "A",
+                color = textColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                textAlign = TextAlign.Center,
+            )
+        } else {
+            val displayLabel = if (service.layerManager.isJapanese) {
+                when (keyDef.label) {
+                    "," -> "、"
+                    "." -> "。"
+                    // かな入力時: アルファベットキーを大文字表示（モード判別用）
+                    else -> if (keyDef.primary.length == 1 && keyDef.primary[0] in 'a'..'z') {
+                        keyDef.label.uppercase()
+                    } else if (service.layerManager.isShifted && keyDef.primary.length == 1) {
+                        keyDef.label.uppercase()
+                    } else {
+                        keyDef.label
+                    }
+                }
+            } else if (service.layerManager.isShifted && keyDef.primary.length == 1) {
                 keyDef.label.uppercase()
             } else {
                 keyDef.label
-            },
-            color = textColor,
-            fontSize = if (keyDef.label.length > 2) 12.sp else 16.sp,
-            textAlign = TextAlign.Center,
-        )
+            }
+            Text(
+                text = displayLabel,
+                color = textColor,
+                fontSize = if (keyDef.label.length > 2) 11.sp else 15.sp,
+                fontWeight = FontWeight.Medium,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                textAlign = TextAlign.Center,
+                style = if (isPressed) {
+                    androidx.compose.ui.text.TextStyle(
+                        shadow = androidx.compose.ui.graphics.Shadow(
+                            color = GlowColor,
+                            blurRadius = 12f,
+                        ),
+                    )
+                } else {
+                    androidx.compose.ui.text.TextStyle.Default
+                },
+            )
+        }
 
         // SPEC: Gboard-style popup bubble for long-press characters
         if (showLongPressPopup && longPressChar.isNotEmpty()) {
@@ -282,5 +358,35 @@ fun KeyView(
                     .padding(end = 3.dp, top = 1.dp),
             )
         }
+    }
+}
+
+/** Minimal globe outline icon drawn with Canvas (no icon dependency needed) */
+@Composable
+private fun GlobeIcon(color: Color, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier = modifier) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = 1.5f * density,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val r = size.minDimension / 2f - stroke.width
+
+        // Outer circle
+        drawCircle(color = color, radius = r, style = stroke)
+        // Vertical ellipse (meridian)
+        drawOval(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(cx - r * 0.35f, cy - r),
+            size = androidx.compose.ui.geometry.Size(r * 0.7f, r * 2f),
+            style = stroke,
+        )
+        // Horizontal line (equator)
+        drawLine(color, androidx.compose.ui.geometry.Offset(cx - r, cy), androidx.compose.ui.geometry.Offset(cx + r, cy), strokeWidth = stroke.width)
+        // Upper latitude
+        drawLine(color, androidx.compose.ui.geometry.Offset(cx - r * 0.85f, cy - r * 0.45f), androidx.compose.ui.geometry.Offset(cx + r * 0.85f, cy - r * 0.45f), strokeWidth = stroke.width)
+        // Lower latitude
+        drawLine(color, androidx.compose.ui.geometry.Offset(cx - r * 0.85f, cy + r * 0.45f), androidx.compose.ui.geometry.Offset(cx + r * 0.85f, cy + r * 0.45f), strokeWidth = stroke.width)
     }
 }

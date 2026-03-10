@@ -25,6 +25,7 @@ sealed class KeyAction {
     data object Tab : KeyAction()
     data object SwitchIme : KeyAction()
     data object ToggleJapanese : KeyAction()
+    data object Emoji : KeyAction()
 }
 
 data class KeyboardLayout(
@@ -44,40 +45,37 @@ object DefaultLayouts {
                 key("i", swipeUp = "8"), key("o", swipeUp = "9"),
                 key("p", swipeUp = "0", swipeLeft = "[", swipeRight = "]"),
             ),
-            // Row 2: A-;
+            // Row 2: A-L + ー
             listOf(
                 key("a", swipeUp = "@", swipeLeft = "{", swipeRight = "}"),
                 key("s", swipeUp = "#"), key("d", swipeUp = "$"),
                 key("f", swipeUp = "%"), key("g", swipeUp = "&"),
                 key("h", swipeUp = "*"), key("j", swipeUp = "("),
                 key("k", swipeUp = ")"), key("l", swipeUp = "-", swipeRight = "="),
-                key(";", label = ";", swipeUp = ":", swipeRight = "'"),
+                key("ー", label = "ー", swipeUp = "〜", swipeDown = ":", swipeRight = ";"),
             ),
-            // Row 3: Z-,
+            // Row 3: Z-. + ⌫
             listOf(
                 key("z", swipeUp = "!", swipeLeft = "\""),
                 key("x", swipeUp = "\"", swipeRight = "'"),
                 key("c", swipeUp = "'"),
                 key("v", swipeUp = "/", swipeRight = "|"),
-                // Trackball area
                 key("b", swipeUp = "\\"), key("n", swipeUp = "?"),
                 key("m", swipeUp = "+", swipeRight = "="),
-                key(",", label = ",", swipeUp = "<", swipeRight = ">", swipeDown = "."),
+                key(",", label = ",", swipeUp = "<", swipeRight = ">"),
+                key(".", swipeUp = "！", swipeDown = "。"),
+                KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: Modifiers (SPEC layout)
-            // [Tab][Fn][SP(2x)][⇧] [TR] [BS(1.2x)][EN(1.2x)][GL][.]
+            // Row 4: Esc Fn ⇧ [⎵⎵⎵] ' [↵↵]
+            // スペースswipe左右で日英切替、Enter大きめ
             listOf(
-                KeyDef("Tab", action = KeyAction.Tab),
+                KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
                 KeyDef("Fn", action = KeyAction.Fn),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
-                    swipeDown = "あ", longPress = null),
                 KeyDef("⇧", action = KeyAction.Shift),
-                // Trackball area
-                KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f,
-                    swipeLeft = "⌫w"), // BS left-swipe = word delete (SPEC)
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                KeyDef("GL", action = KeyAction.SwitchIme),
-                KeyDef(".", swipeUp = "_"),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
+                    swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
+                key("'", swipeUp = "\"", swipeDown = ";"),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
     )
@@ -90,7 +88,8 @@ object DefaultLayouts {
             ),
             listOf(
                 key("!"), key("@"), key("#"), key("$"), key("%"),
-                key("^"), key("&"), key("*"), key("("), key(")"),
+                key("^"), key("&"), key("*"), key("("),
+                key(")", swipeUp = "_"),
             ),
             listOf(
                 KeyDef("C-c", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_C, ctrl = true)),
@@ -101,16 +100,17 @@ object DefaultLayouts {
                 KeyDef("↓", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN)),
                 KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP)),
                 KeyDef("→", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)),
+                key("~"),
+                KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape),
+                KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
+                KeyDef("😀", action = KeyAction.Emoji),
                 KeyDef("Fn2", action = KeyAction.FnPage2),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f),
                 KeyDef("⇧", action = KeyAction.Shift),
-                KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                KeyDef("GL", action = KeyAction.SwitchIme),
-                key("_"),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2.5f,
+                    swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
     )
@@ -131,25 +131,30 @@ object DefaultLayouts {
                 KeyDef("F9", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_F9)),
                 KeyDef("F10", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_F10)),
                 KeyDef("F11", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_F11)),
+                KeyDef("Del", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_FORWARD_DEL)),
+                key("`"),
+                KeyDef("Ins", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_INSERT)),
                 KeyDef("F12", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_F12)),
+                key("_"),
             ),
             listOf(
                 KeyDef("Home", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_MOVE_HOME)),
                 KeyDef("End", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_MOVE_END)),
                 KeyDef("PgUp", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_PAGE_UP)),
                 KeyDef("PgDn", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_PAGE_DOWN)),
-                KeyDef("Ins", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_INSERT)),
-                KeyDef("Del", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_FORWARD_DEL)),
+                key("|"), key("\\"), key("~"),
+                key("`"),
+                key("_"),
+                KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape),
+                KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
                 KeyDef("Fn", action = KeyAction.Fn),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f),
                 KeyDef("⇧", action = KeyAction.Shift),
-                KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = 1.2f),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                KeyDef("GL", action = KeyAction.SwitchIme),
-                key("`"),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
+                    swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
+                key("'", swipeUp = "\"", swipeDown = ";"),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
     )

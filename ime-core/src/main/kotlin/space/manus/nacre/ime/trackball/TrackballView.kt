@@ -1,33 +1,27 @@
 package space.manus.nacre.ime.trackball
 
 import android.view.KeyEvent
-import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.withTimeoutOrNull
 import space.manus.nacre.ime.NacreInputMethodService
 import kotlin.math.abs
 import kotlin.math.exp
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
-
-private val TrackballBg = Color(0xFF1A1A3E)
-private val TrackballDot = Color(0xFF00D4AA)
 
 @Composable
 fun TrackballView(
@@ -35,21 +29,23 @@ fun TrackballView(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    val theme = service.currentTheme
+    val accent = Color(0xFFFF2222) // Trackball: red glow
+    val bg = Color(theme.background.toInt())
 
     var dotX by remember { mutableFloatStateOf(0f) }
     var dotY by remember { mutableFloatStateOf(0f) }
+    var isActive by remember { mutableStateOf(false) }
 
     val stepThreshold = with(density) { 8.dp.toPx() }
-    val maxDotOffset = with(density) { 24.dp.toPx() }
+    val maxDotOffset = with(density) { 12.dp.toPx() }
     val tapThreshold = with(density) { 4.dp.toPx() }
     val flickThreshold = with(density) { 20.dp.toPx() }
     val doubleTapTimeoutMs = 300L
     val longPressMs = 350L
 
-    // +16dp hit area expansion (SPEC: 60dp visual + 16dp padding = 76dp touch)
     Box(
         modifier = modifier
-            .padding(8.dp) // 8dp each side = 16dp total expansion
             .pointerInput(Unit) {
                 var lastTapTime = 0L
                 var isInSelectionMode = false
@@ -57,6 +53,7 @@ fun TrackballView(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val downTime = System.currentTimeMillis()
+                    isActive = true
 
                     var totalDragX = 0f
                     var totalDragY = 0f
@@ -65,7 +62,6 @@ fun TrackballView(
                     var wasDragged = false
                     var longPressHandled = false
 
-                    // Check if this is a double-tap start (for selection extend)
                     val isDoubleTapStart = downTime - lastTapTime < doubleTapTimeoutMs
 
                     try {
@@ -78,12 +74,12 @@ fun TrackballView(
                             }
 
                             if (event == null) {
-                                // Long press: copy-paste menu
                                 if (!wasDragged && !longPressHandled) {
                                     longPressHandled = true
                                     service.feedbackManager.onLongPress()
-                                    // Show clipboard panel via command palette mechanism
-                                    service.layerManager.requestCommandPalette()
+                                    // Long press → voice input
+                                    val lang = if (service.layerManager.isJapanese) "ja-JP" else "en-US"
+                                    service.voiceInputManager.startListening(lang)
                                 }
                                 continue
                             }
@@ -100,7 +96,6 @@ fun TrackballView(
                                 }
 
                                 if (wasDragged) {
-                                    // Double-tap + drag = selection extend
                                     if (isDoubleTapStart && !isInSelectionMode) {
                                         isInSelectionMode = true
                                         selectWordAtCursor(service)
@@ -113,8 +108,8 @@ fun TrackballView(
                                     accumulatedX += delta.x * gain
                                     accumulatedY += delta.y * gain
 
-                                    dotX = (dotX + delta.x).coerceIn(-maxDotOffset, maxDotOffset)
-                                    dotY = (dotY + delta.y).coerceIn(-maxDotOffset, maxDotOffset)
+                                    dotX = (dotX + delta.x * 0.3f).coerceIn(-maxDotOffset, maxDotOffset)
+                                    dotY = (dotY + delta.y * 0.3f).coerceIn(-maxDotOffset, maxDotOffset)
 
                                     var dx = 0
                                     var dy = 0
@@ -128,7 +123,6 @@ fun TrackballView(
                                     }
                                     if (dx != 0 || dy != 0) {
                                         if (isInSelectionMode) {
-                                            // Extend selection (Shift+arrow)
                                             extendSelection(service, dx, dy)
                                         } else {
                                             service.inputEngine.moveCursor(dx, dy)
@@ -145,16 +139,15 @@ fun TrackballView(
                     } finally {
                         dotX = 0f
                         dotY = 0f
+                        isActive = false
                         isInSelectionMode = false
                     }
 
                     when {
                         longPressHandled -> {
-                            // Already handled
                             lastTapTime = 0L
                         }
                         wasDragged -> {
-                            // Check for up-flick (voice input)
                             if (totalDragY < -flickThreshold && abs(totalDragX) < abs(totalDragY)) {
                                 val lang = if (service.layerManager.isJapanese) "ja-JP" else "en-US"
                                 service.voiceInputManager.startListening(lang)
@@ -162,14 +155,11 @@ fun TrackballView(
                             lastTapTime = 0L
                         }
                         else -> {
-                            // Tap
                             val now = System.currentTimeMillis()
                             if (now - lastTapTime < doubleTapTimeoutMs) {
-                                // Double-tap: word selection
                                 selectWordAtCursor(service)
                                 lastTapTime = 0L
                             } else {
-                                // Single tap: send Enter/tap action
                                 lastTapTime = now
                                 service.feedbackManager.onKeyPress(
                                     space.manus.nacre.config.KeyAction.Enter,
@@ -186,31 +176,81 @@ fun TrackballView(
             },
         contentAlignment = Alignment.Center,
     ) {
-        // Visual trackball (60dp)
-        Box(
-            modifier = Modifier
-                .size(60.dp)
-                .clip(CircleShape)
-                .background(TrackballBg),
-            contentAlignment = Alignment.Center,
-        ) {
-            // Outer ring
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(TrackballDot.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                // Pointer dot
-                Box(
-                    modifier = Modifier
-                        .offset { IntOffset(dotX.roundToInt(), dotY.roundToInt()) }
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(TrackballDot),
-                )
-            }
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val r = size.minDimension / 2f
+
+            val ringAlpha = if (isActive) 0.9f else 0.35f
+            val glowRadius = if (isActive) r * 1.1f else r
+
+            // Outer glow — soft radial gradient behind the ring
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        accent.copy(alpha = if (isActive) 0.2f else 0.06f),
+                        Color.Transparent,
+                    ),
+                    center = Offset(cx, cy),
+                    radius = glowRadius,
+                ),
+                radius = glowRadius,
+            )
+
+            // Dark pit — the trackball well
+            drawCircle(
+                color = bg,
+                radius = r * 0.85f,
+            )
+
+            // Glowing ring — the main visual element
+            drawCircle(
+                brush = Brush.sweepGradient(
+                    colors = listOf(
+                        accent.copy(alpha = ringAlpha),
+                        accent.copy(alpha = ringAlpha * 0.3f),
+                        accent.copy(alpha = ringAlpha),
+                        accent.copy(alpha = ringAlpha * 0.3f),
+                        accent.copy(alpha = ringAlpha),
+                    ),
+                    center = Offset(cx, cy),
+                ),
+                radius = r * 0.92f,
+                style = Stroke(width = 2f * density.density),
+            )
+
+            // Inner subtle ring
+            drawCircle(
+                color = accent.copy(alpha = ringAlpha * 0.15f),
+                radius = r * 0.55f,
+                style = Stroke(width = 0.5f * density.density),
+            )
+
+            // Center dot — follows finger slightly
+            val dotCx = cx + dotX
+            val dotCy = cy + dotY
+            val dotR = 2.5f * density.density
+
+            // Dot glow
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        accent.copy(alpha = if (isActive) 0.5f else 0.2f),
+                        Color.Transparent,
+                    ),
+                    center = Offset(dotCx, dotCy),
+                    radius = dotR * 4f,
+                ),
+                radius = dotR * 4f,
+                center = Offset(dotCx, dotCy),
+            )
+
+            // Dot core
+            drawCircle(
+                color = accent.copy(alpha = if (isActive) 1f else 0.5f),
+                radius = dotR,
+                center = Offset(dotCx, dotCy),
+            )
         }
     }
 }

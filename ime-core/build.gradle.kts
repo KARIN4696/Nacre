@@ -28,6 +28,7 @@ android {
 
 dependencies {
     implementation(project(":ime-config"))
+    implementation(project(":ime-ai"))
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))

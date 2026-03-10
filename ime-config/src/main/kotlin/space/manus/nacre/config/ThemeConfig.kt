@@ -22,15 +22,15 @@ object ThemeProvider {
 
     val dark = NacreTheme(
         name = "Dark",
-        background = 0xFF0F0F23,
-        surface = 0xFF1A1A3A,
-        keyBackground = 0xFF2A2A4A,
-        keyBackgroundPressed = 0xFF3A3A5A,
+        background = 0xFF000000,
+        surface = 0xFF111111,
+        keyBackground = 0xFF000000,
+        keyBackgroundPressed = 0xFF1A1A1A,
         keyText = 0xFFE0E0E0,
-        keyTextSwipe = 0xFF888899,
+        keyTextSwipe = 0xFF555555,
         accent = 0xFF00D4AA,
-        candidateBackground = 0xFF1A1A3A,
-        candidateSelectedBackground = 0xFF2A2A4A,
+        candidateBackground = 0xFF000000,
+        candidateSelectedBackground = 0xFF1A1A1A,
     )
 
     val light = NacreTheme(
@@ -49,13 +49,13 @@ object ThemeProvider {
     val amoled = NacreTheme(
         name = "AMOLED",
         background = 0xFF000000,
-        surface = 0xFF0A0A0A,
-        keyBackground = 0xFF1A1A1A,
-        keyBackgroundPressed = 0xFF2A2A2A,
+        surface = 0xFF111111,
+        keyBackground = 0xFF000000,
+        keyBackgroundPressed = 0xFF1A1A1A,
         keyText = 0xFFE0E0E0,
-        keyTextSwipe = 0xFF666666,
+        keyTextSwipe = 0xFF555555,
         accent = 0xFF00D4AA,
-        candidateBackground = 0xFF0A0A0A,
+        candidateBackground = 0xFF000000,
         candidateSelectedBackground = 0xFF1A1A1A,
     )
 
@@ -73,7 +73,7 @@ object ThemeProvider {
 
     fun loadSelectedTheme(context: Context): NacreTheme {
         val name = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_SELECTED, "Dark") ?: "Dark"
+            .getString(KEY_SELECTED, "AMOLED") ?: "AMOLED"
         return getTheme(name)
     }
 }

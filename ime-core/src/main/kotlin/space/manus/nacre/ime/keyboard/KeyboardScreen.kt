@@ -11,7 +11,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import space.manus.nacre.config.ThemeProvider
 import space.manus.nacre.ime.NacreInputMethodService
 import space.manus.nacre.ime.input.Layer
 import space.manus.nacre.ime.trackball.TrackballView
@@ -34,6 +33,7 @@ fun KeyboardScreen(service: NacreInputMethodService) {
     // Panel state
     var showClipboard by remember { mutableStateOf(false) }
     var showCommandPalette by remember { mutableStateOf(false) }
+    var showEmoji by remember { mutableStateOf(false) }
 
     // Check if command palette should open (Fn+Space triggers it)
     val isCommandPaletteRequested = service.layerManager.isCommandPaletteRequested
@@ -41,6 +41,15 @@ fun KeyboardScreen(service: NacreInputMethodService) {
         if (isCommandPaletteRequested) {
             showCommandPalette = true
             service.layerManager.isCommandPaletteRequested = false
+        }
+    }
+
+    // Check if emoji panel should open
+    val isEmojiRequested = service.layerManager.isEmojiRequested
+    LaunchedEffect(isEmojiRequested) {
+        if (isEmojiRequested) {
+            showEmoji = true
+            service.layerManager.isEmojiRequested = false
         }
     }
 
@@ -53,10 +62,14 @@ fun KeyboardScreen(service: NacreInputMethodService) {
         CommandPalette(service = service, onDismiss = { showCommandPalette = false })
         return
     }
+    if (showEmoji) {
+        EmojiPanel(service = service, onDismiss = { showEmoji = false })
+        return
+    }
 
     when (layoutMode) {
         space.manus.nacre.ime.foldable.LayoutMode.FullVSplit ->
-            VSplitKeyboardScreen(service = service)
+            VSplitKeyboardScreen(service = service, angle = 4f)
         else ->
             StandardKeyboardScreen(service = service)
     }
@@ -66,20 +79,21 @@ fun KeyboardScreen(service: NacreInputMethodService) {
 private fun StandardKeyboardScreen(service: NacreInputMethodService) {
     val layerManager = service.layerManager
     val layout = layerManager.currentLayout()
-    val theme = remember { ThemeProvider.loadSelectedTheme(service) }
+    val theme = service.currentTheme
     val bgColor = Color(theme.background.toInt())
     val accentColor = Color(theme.accent.toInt())
 
-    // SPEC: keyboard height <= 35% of screen height
     val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
-    val maxKeyboardHeight = screenHeightDp * 0.35f
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
+    val isLargeScreen = screenWidthDp > 500.dp
+    val maxKeyboardHeight = if (isLargeScreen) 220.dp else screenHeightDp * 0.32f
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = maxKeyboardHeight)
             .background(bgColor)
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 4.dp, vertical = 1.dp),
     ) {
         // Candidate bar (prediction/conversion)
         CandidateBar(service = service)
@@ -90,15 +104,19 @@ private fun StandardKeyboardScreen(service: NacreInputMethodService) {
         // Keyboard rows with trackball in the middle
         val rows = layout.rows
         for ((rowIndex, row) in rows.withIndex()) {
+            val isModRow = rowIndex == rows.lastIndex
+            val keyHeight = if (isModRow) 26f else if (isLargeScreen) 34f else 40f
+
             if (rowIndex == 2 || rowIndex == 3) {
                 KeyRowWithTrackball(
                     keys = row,
                     service = service,
                     showTrackball = rowIndex == 2,
                     rowIndex = rowIndex,
+                    keyHeightDp = keyHeight,
                 )
             } else {
-                KeyRow(keys = row, service = service, rowIndex = rowIndex)
+                KeyRow(keys = row, service = service, rowIndex = rowIndex, keyHeightDp = keyHeight)
             }
         }
     }
@@ -161,11 +179,12 @@ fun KeyRow(
     keys: List<space.manus.nacre.config.KeyDef>,
     service: NacreInputMethodService,
     rowIndex: Int = 0,
+    keyHeightDp: Float = 52f,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp),
+            .height(keyHeightDp.dp + 3.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -176,6 +195,7 @@ fun KeyRow(
                 modifier = Modifier.weight(keyDef.widthMultiplier),
                 row = rowIndex,
                 column = colIndex,
+                heightDp = keyHeightDp,
             )
         }
     }
@@ -187,15 +207,18 @@ fun KeyRowWithTrackball(
     service: NacreInputMethodService,
     showTrackball: Boolean,
     rowIndex: Int = 0,
+    keyHeightDp: Float = 52f,
 ) {
     val mid = keys.size / 2
     val leftKeys = keys.subList(0, mid)
     val rightKeys = keys.subList(mid, keys.size)
 
+    val rowHeight = if (showTrackball) 42.dp else (keyHeightDp + 3).dp
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (showTrackball) 64.dp else 56.dp),
+            .height(rowHeight),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -207,17 +230,17 @@ fun KeyRowWithTrackball(
                     modifier = Modifier.weight(keyDef.widthMultiplier),
                     row = rowIndex,
                     column = colIndex,
+                    heightDp = keyHeightDp,
                 )
             }
         }
 
         if (showTrackball) {
-            // SPEC: >=8dp deadzone between trackball and adjacent V/B keys
-            Spacer(modifier = Modifier.width(4.dp))
-            TrackballView(service = service, modifier = Modifier.size(76.dp))
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(2.dp))
+            TrackballView(service = service, modifier = Modifier.size(38.dp))
+            Spacer(modifier = Modifier.width(2.dp))
         } else {
-            Spacer(modifier = Modifier.width(84.dp)) // 76 + 8dp deadzone
+            Spacer(modifier = Modifier.width(8.dp))
         }
 
         Row(modifier = Modifier.weight(1f)) {
@@ -228,6 +251,7 @@ fun KeyRowWithTrackball(
                     modifier = Modifier.weight(keyDef.widthMultiplier),
                     row = rowIndex,
                     column = mid + colIndex,
+                    heightDp = keyHeightDp,
                 )
             }
         }

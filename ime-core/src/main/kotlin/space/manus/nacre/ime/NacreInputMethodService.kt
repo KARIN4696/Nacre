@@ -28,6 +28,7 @@ import space.manus.nacre.ime.input.InputEngine
 import space.manus.nacre.ime.input.LayerManager
 import space.manus.nacre.ime.input.MacroEngine
 import space.manus.nacre.ime.input.NacreDictionary
+import space.manus.nacre.ai.KenLmScorer
 import space.manus.nacre.ime.input.PhysicalKeyboardDetector
 import space.manus.nacre.ime.input.SnippetEngine
 import space.manus.nacre.ime.input.VoiceInputManager
@@ -88,6 +89,8 @@ class NacreInputMethodService :
         private set
     lateinit var keyLighting: KeyLighting
         private set
+    lateinit var currentTheme: space.manus.nacre.config.NacreTheme
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -96,6 +99,7 @@ class NacreInputMethodService :
 
         // Initialize all components
         configRepository = ConfigRepository(this)
+        currentTheme = space.manus.nacre.config.ThemeProvider.loadSelectedTheme(this)
         inputEngine = InputEngine(this)
         feedbackManager = FeedbackManager(this)
         clipboardManager = ClipboardManager(this)
@@ -111,12 +115,41 @@ class NacreInputMethodService :
         clipboardManager.startListening()
         foldableDetector.startHingeAngleListening()
 
+        // Check LLM server availability (non-blocking)
+        inputEngine.llmReranker.checkServer()
+
         // Load dictionary in background, publish on Main
         serviceScope.launch(Dispatchers.IO) {
             val dict = NacreDictionary(this@NacreInputMethodService)
-            dict.load()
+            try {
+                dict.load()
+            } catch (e: Exception) {
+                android.util.Log.e("NacreIME", "Dictionary load FAILED", e)
+                withContext(Dispatchers.Main) {
+                    inputEngine.debugInfo = "DICT FAIL: ${e.message}"
+                }
+                return@launch
+            }
             withContext(Dispatchers.Main) {
                 inputEngine.dictionary = dict
+                inputEngine.dictionaryLoaded = true
+                inputEngine.refreshPredictionsIfNeeded()
+            }
+
+            // Lazy-load KenLM model if available
+            try {
+                val modelFile = java.io.File(filesDir, "models/japanese-5gram.klm")
+                if (modelFile.exists()) {
+                    val scorer = KenLmScorer()
+                    if (scorer.load(modelFile.absolutePath)) {
+                        dict.kenLmScorer = scorer
+                        android.util.Log.i("NacreIME", "KenLM model loaded: ${modelFile.name}")
+                    }
+                } else {
+                    android.util.Log.i("NacreIME", "KenLM model not found at ${modelFile.absolutePath} (optional)")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("NacreIME", "KenLM load failed (optional)", e)
             }
         }
     }
@@ -212,6 +245,8 @@ class NacreInputMethodService :
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // Reload theme & config each time keyboard appears (picks up settings changes)
+        currentTheme = space.manus.nacre.config.ThemeProvider.loadSelectedTheme(this)
         inputEngine.onStartInput(info)
     }
 

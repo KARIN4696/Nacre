@@ -15,15 +15,17 @@ class JapaneseEngine {
     /**
      * ローマ字テキストをひらがなに変換する。
      * 未確定のローマ字はそのまま末尾に残す。
+     * @param finalize true when committing — converts trailing 'n' to 'ん'
      */
-    fun romajiToHiragana(input: String): String {
+    fun romajiToHiragana(input: String, finalize: Boolean = false): String {
         val result = StringBuilder()
         var i = 0
         val lower = input.lowercase()
 
         while (i < lower.length) {
-            // Try 3-char match first, then 2-char, then 1-char
-            val matched = tryMatch(lower, i, 3)
+            // Try 4-char match first, then 3, 2, 1 (supports xtsu/ltsu etc.)
+            val matched = tryMatch(lower, i, 4)
+                ?: tryMatch(lower, i, 3)
                 ?: tryMatch(lower, i, 2)
                 ?: tryMatch(lower, i, 1)
 
@@ -37,9 +39,16 @@ class JapaneseEngine {
                     i += 2
                 }
                 // Handle "nn" → ん
+                // If followed by vowel/y (e.g. "nno"→ん+の), consume only first n
+                // If nn is at end or followed by consonant, consume both
                 else if (i + 1 < lower.length && lower[i] == 'n' && lower[i + 1] == 'n') {
                     result.append("ん")
-                    i += 2
+                    val afterNN = i + 2
+                    if (afterNN < lower.length && lower[afterNN] in VOWELS_AND_Y) {
+                        i += 1  // keep second n for next kana (e.g. nno → ん+の)
+                    } else {
+                        i += 2  // consume both (e.g. nn at end, or nnk...)
+                    }
                 }
                 // Handle double consonant (kk, ss, tt, etc.) → っ
                 else if (i + 1 < lower.length && lower[i] == lower[i + 1] &&
@@ -48,8 +57,12 @@ class JapaneseEngine {
                     result.append("っ")
                     i += 1 // consume only the first consonant
                 }
-                // Standalone 'n' before non-vowel or end
-                else if (lower[i] == 'n' && (i + 1 >= lower.length || lower[i + 1] !in VOWELS_AND_Y)) {
+                // Standalone 'n' before non-vowel → ん
+                // At end of string: only convert if finalizing (committing)
+                else if (lower[i] == 'n' && (
+                    (i + 1 < lower.length && lower[i + 1] !in VOWELS_AND_Y) ||
+                    (i + 1 >= lower.length && finalize)
+                )) {
                     result.append("ん")
                     i += 1
                 }
@@ -74,7 +87,7 @@ class JapaneseEngine {
     private data class MatchResult(val kana: String, val consumed: Int)
 
     companion object {
-        private val VOWELS_AND_Y = setOf('a', 'i', 'u', 'e', 'o', 'y', 'n')
+        private val VOWELS_AND_Y = setOf('a', 'i', 'u', 'e', 'o', 'y')
         private val DOUBLE_CONSONANTS = setOf('k', 's', 't', 'p', 'c', 'g', 'z', 'd', 'b', 'j', 'f', 'h', 'r', 'w', 'm')
 
         private val ROMAJI_TABLE = mapOf(
@@ -96,11 +109,11 @@ class JapaneseEngine {
             // M-row
             "ma" to "ま", "mi" to "み", "mu" to "む", "me" to "め", "mo" to "も",
             // Y-row
-            "ya" to "や", "yu" to "ゆ", "yo" to "よ",
+            "ya" to "や", "yi" to "い", "yu" to "ゆ", "ye" to "いぇ", "yo" to "よ",
             // R-row
             "ra" to "ら", "ri" to "り", "ru" to "る", "re" to "れ", "ro" to "ろ",
             // W-row
-            "wa" to "わ", "wi" to "うぃ", "we" to "うぇ", "wo" to "を",
+            "wa" to "わ", "wi" to "うぃ", "wu" to "う", "we" to "うぇ", "wo" to "を", "wha" to "うぁ", "whi" to "うぃ", "whu" to "う", "whe" to "うぇ", "who" to "うぉ",
             // G-row (dakuten)
             "ga" to "が", "gi" to "ぎ", "gu" to "ぐ", "ge" to "げ", "go" to "ご",
             // Z-row
@@ -113,20 +126,21 @@ class JapaneseEngine {
             // P-row (handakuten)
             "pa" to "ぱ", "pi" to "ぴ", "pu" to "ぷ", "pe" to "ぺ", "po" to "ぽ",
             // Yōon (contracted sounds)
-            "kya" to "きゃ", "kyu" to "きゅ", "kyo" to "きょ",
-            "sha" to "しゃ", "shu" to "しゅ", "sho" to "しょ",
-            "sya" to "しゃ", "syu" to "しゅ", "syo" to "しょ",
-            "cha" to "ちゃ", "chu" to "ちゅ", "cho" to "ちょ",
-            "tya" to "ちゃ", "tyu" to "ちゅ", "tyo" to "ちょ",
-            "nya" to "にゃ", "nyu" to "にゅ", "nyo" to "にょ",
-            "hya" to "ひゃ", "hyu" to "ひゅ", "hyo" to "ひょ",
-            "mya" to "みゃ", "myu" to "みゅ", "myo" to "みょ",
-            "rya" to "りゃ", "ryu" to "りゅ", "ryo" to "りょ",
-            "gya" to "ぎゃ", "gyu" to "ぎゅ", "gyo" to "ぎょ",
+            "kya" to "きゃ", "kyi" to "きぃ", "kyu" to "きゅ", "kye" to "きぇ", "kyo" to "きょ",
+            "sha" to "しゃ", "shu" to "しゅ", "she" to "しぇ", "sho" to "しょ",
+            "sya" to "しゃ", "syi" to "しぃ", "syu" to "しゅ", "sye" to "しぇ", "syo" to "しょ",
+            "cha" to "ちゃ", "chu" to "ちゅ", "che" to "ちぇ", "cho" to "ちょ",
+            "tya" to "ちゃ", "tyi" to "ちぃ", "tyu" to "ちゅ", "tye" to "ちぇ", "tyo" to "ちょ",
+            "nya" to "にゃ", "nyi" to "にぃ", "nyu" to "にゅ", "nye" to "にぇ", "nyo" to "にょ",
+            "hya" to "ひゃ", "hyi" to "ひぃ", "hyu" to "ひゅ", "hye" to "ひぇ", "hyo" to "ひょ",
+            "mya" to "みゃ", "myi" to "みぃ", "myu" to "みゅ", "mye" to "みぇ", "myo" to "みょ",
+            "rya" to "りゃ", "ryi" to "りぃ", "ryu" to "りゅ", "rye" to "りぇ", "ryo" to "りょ",
+            "gya" to "ぎゃ", "gyi" to "ぎぃ", "gyu" to "ぎゅ", "gye" to "ぎぇ", "gyo" to "ぎょ",
             "ja" to "じゃ", "ju" to "じゅ", "jo" to "じょ",
-            "jya" to "じゃ", "jyu" to "じゅ", "jyo" to "じょ",
-            "bya" to "びゃ", "byu" to "びゅ", "byo" to "びょ",
-            "pya" to "ぴゃ", "pyu" to "ぴゅ", "pyo" to "ぴょ",
+            "je" to "じぇ",
+            "jya" to "じゃ", "jyi" to "じぃ", "jyu" to "じゅ", "jye" to "じぇ", "jyo" to "じょ",
+            "bya" to "びゃ", "byi" to "びぃ", "byu" to "びゅ", "bye" to "びぇ", "byo" to "びょ",
+            "pya" to "ぴゃ", "pyi" to "ぴぃ", "pyu" to "ぴゅ", "pye" to "ぴぇ", "pyo" to "ぴょ",
             // Foreign sounds (カタカナ語用)
             "fa" to "ふぁ", "fi" to "ふぃ", "fe" to "ふぇ", "fo" to "ふぉ",
             "thi" to "てぃ", "dhi" to "でぃ",
@@ -142,8 +156,8 @@ class JapaneseEngine {
             "lya" to "ゃ", "lyu" to "ゅ", "lyo" to "ょ",
             "ltu" to "っ", "ltsu" to "っ",
             // Additional yōon variants
-            "zya" to "じゃ", "zyu" to "じゅ", "zyo" to "じょ",
-            "dya" to "ぢゃ", "dyu" to "ぢゅ", "dyo" to "ぢょ",
+            "zya" to "じゃ", "zyi" to "じぃ", "zyu" to "じゅ", "zye" to "じぇ", "zyo" to "じょ",
+            "dya" to "ぢゃ", "dyi" to "ぢぃ", "dyu" to "ぢゅ", "dye" to "ぢぇ", "dyo" to "ぢょ",
             // Punctuation
             "-" to "ー",
         )
