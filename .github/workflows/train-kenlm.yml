@@ -240,6 +240,7 @@ jobs:
             --prune ${PRUNE} \
             --verbose_header \
             --discount_fallback \
+            --skip_symbols \
             -S 80% \
             -T /tmp \
             < tokenized.txt \
