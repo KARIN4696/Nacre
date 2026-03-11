@@ -25,7 +25,7 @@ import space.manus.nacre.ai.KenLmScorer
 class NacreDictionary(private val context: Context) : DictionaryProvider {
 
     // reading → list of entries with POS info
-    private val dict = HashMap<String, MutableList<DictEntry>>(1200000)
+    private val dict = HashMap<String, MutableList<DictEntry>>(4000000)
 
     // Sorted readings for prefix search
     private var sortedReadings: Array<String> = emptyArray()
@@ -604,21 +604,25 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     private fun kenLmRescore(candidates: MutableList<ConversionCandidate>) {
         val scorer = kenLmScorer ?: return
         if (!scorer.isReady() || candidates.isEmpty()) return
+        // Skip LM scoring for short inputs (not enough context) or tiny candidate lists
+        if (candidates.size <= 2) return
+        // Only score top candidates for performance
+        val maxScore = 20.coerceAtMost(candidates.size)
 
         val precedingContext = if (lastCommittedSurface.isNotEmpty()) {
             val prev2 = if (secondLastCommittedSurface.isNotEmpty()) "$secondLastCommittedSurface " else ""
             "$prev2$lastCommittedSurface"
         } else ""
 
-        // Build segment lists for all candidates
-        val segmentLists = candidates.map { c ->
+        // Build segment lists for top candidates only
+        val segmentLists = candidates.take(maxScore).map { c ->
             c.segments.ifEmpty { listOf(c.surface) }
         }
 
         val scores = scorer.scoreBatch(segmentLists, precedingContext)
 
         // Blend LM scores with existing costs
-        for (i in candidates.indices) {
+        for (i in 0 until maxScore) {
             if (i >= scores.size) break
             // scores[i] is log10 prob (negative; higher = better)
             // Convert to cost adjustment: more likely sentences get lower cost
