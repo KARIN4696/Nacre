@@ -224,7 +224,7 @@ Java_space_manus_nacre_ai_KenLmJni_getStateSize(JNIEnv*, jobject) {
 #ifdef KENLM_AVAILABLE
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_model) return 0;
-    return (jint)g_model->BaseStateSize();
+    return (jint)g_model->StateSize();
 #else
     return 0;
 #endif
@@ -242,7 +242,7 @@ Java_space_manus_nacre_ai_KenLmJni_getBeginState(JNIEnv* env, jobject) {
     lm::ngram::State state;
     g_model->BeginSentenceWrite(&state);
 
-    int size = (int)g_model->BaseStateSize();
+    int size = (int)g_model->StateSize();
     jbyteArray result = env->NewByteArray(size);
     env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(&state));
     return result;
@@ -267,7 +267,7 @@ Java_space_manus_nacre_ai_KenLmJni_scoreWord(JNIEnv* env, jobject, jbyteArray in
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_model) return nullptr;
 
-    int state_size = (int)g_model->BaseStateSize();
+    int state_size = (int)g_model->StateSize();
 
     // Read input state
     lm::ngram::State state;
@@ -304,7 +304,7 @@ Java_space_manus_nacre_ai_KenLmJni_scoreWordBatch(JNIEnv* env, jobject, jbyteArr
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_model) return nullptr;
 
-    int state_size = (int)g_model->BaseStateSize();
+    int state_size = (int)g_model->StateSize();
     int count = env->GetArrayLength(words);
     int result_entry_size = 4 + state_size;
 
