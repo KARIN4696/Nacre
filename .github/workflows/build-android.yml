@@ -24,6 +24,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install NDK and CMake
+        run: |
+          sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Clone KenLM source for native build
+        run: |
+          git clone --depth 1 https://github.com/kpu/kenlm.git /tmp/kenlm-src
+          mkdir -p ime-ai/src/main/cpp/kenlm
+          cp -r /tmp/kenlm-src/lm ime-ai/src/main/cpp/kenlm/
+          cp -r /tmp/kenlm-src/util ime-ai/src/main/cpp/kenlm/
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -35,6 +46,11 @@ jobs:
 
       - name: Build Release APK
         run: ./gradlew :app:assembleRelease
+
+      - name: Verify native library included
+        run: |
+          echo "=== Checking for libnacre-ai.so ==="
+          find app/build/outputs -name "*.apk" -exec unzip -l {} \; | grep libnacre || echo "WARNING: libnacre-ai.so not found in APK"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
