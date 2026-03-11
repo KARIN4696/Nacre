@@ -40,6 +40,9 @@ fun CandidateBar(
     val selectedIndex = service.inputEngine.selectedCandidateIndex
     val dictLoaded = service.inputEngine.dictionaryLoaded
     val isConverting = service.inputEngine.isConverting
+    val voicePartial = service.voiceInputManager.partialText
+    val voiceListening = service.voiceInputManager.isListening
+    val voiceError = service.voiceInputManager.lastError
 
     // SPEC: hide candidate bar in password fields
     if (service.inputEngine.isPasswordField) {
@@ -100,7 +103,19 @@ fun CandidateBar(
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (candidates.isEmpty() && !dictLoaded) {
+        if (voiceListening) {
+            // Show voice input status in candidate bar
+            Text(
+                text = if (voicePartial.isNotEmpty()) "🎤 $voicePartial"
+                       else if (voiceError.isNotEmpty()) "⚠ $voiceError"
+                       else "🎤 音声入力中...",
+                color = if (voiceError.isNotEmpty()) Color(0xFFFF6666)
+                        else if (voicePartial.isNotEmpty()) Color(0xFFFFAAAA)
+                        else Color(0xFFFF8888),
+                fontSize = 12.sp,
+                maxLines = 1,
+            )
+        } else if (candidates.isEmpty() && !dictLoaded) {
             Text(
                 text = "辞書loading...",
                 color = Color(0xFF555555),

@@ -37,6 +37,10 @@ class InputEngine(private val service: NacreInputMethodService) {
     var composingKana by mutableStateOf("")
         private set
 
+    // English composition state
+    private var englishComposing: String = ""
+    private var englishPredictionJob: Job? = null
+
     // Conversion state (observable by Compose)
     var candidates = mutableStateListOf<ConversionCandidate>()
         private set
@@ -241,6 +245,12 @@ class InputEngine(private val service: NacreInputMethodService) {
 
         when (action) {
             is KeyAction.Text -> {
+                // Dismiss symbol candidates (、。？！) when typing next character
+                if (symbolReplace != null) {
+                    symbolReplace = null
+                    candidates.clear()
+                    selectedCandidateIndex = -1
+                }
                 if (isConverting) {
                     // If we're showing candidates, commit selected and start fresh
                     commitSelectedCandidate(ic)
@@ -269,12 +279,34 @@ class InputEngine(private val service: NacreInputMethodService) {
                     }
                     processJapaneseInput(jaText, ic)
                 } else {
-                    val text = if (service.layerManager.isShifted) {
+                    val ch = if (service.layerManager.isShifted) {
                         action.text.uppercase()
                     } else {
                         action.text
                     }
-                    commitText(text)
+                    // English composition with prediction
+                    if (ch.first().isLetter()) {
+                        englishComposing += ch
+                        ic.setComposingText(englishComposing, 1)
+                        updateEnglishPredictions(englishComposing)
+                    } else {
+                        // Non-letter (space, punctuation, digit): commit composing + the char
+                        if (englishComposing.isNotEmpty()) {
+                            // If a candidate is selected, commit that; otherwise commit raw text
+                            if (selectedCandidateIndex >= 0 && candidates.isNotEmpty()) {
+                                val selected = candidates[selectedCandidateIndex]
+                                ic.commitText(selected.surface, 1)
+                                dictionary?.recordEnglishSelection(selected.surface)
+                            } else {
+                                ic.commitText(englishComposing, 1)
+                                dictionary?.recordEnglishSelection(englishComposing)
+                            }
+                            englishComposing = ""
+                            candidates.clear()
+                            selectedCandidateIndex = -1
+                        }
+                        ic.commitText(ch, 1)
+                    }
                     if (service.layerManager.isShifted) {
                         service.layerManager.toggleShift()
                     }
@@ -298,6 +330,16 @@ class InputEngine(private val service: NacreInputMethodService) {
                         ic.setComposingText(kana, 1)
                         updatePredictions(kana)
                     }
+                } else if (englishComposing.isNotEmpty()) {
+                    // English backspace: remove last char
+                    englishComposing = englishComposing.dropLast(1)
+                    if (englishComposing.isEmpty()) {
+                        ic.finishComposingText()
+                        clearCandidates()
+                    } else {
+                        ic.setComposingText(englishComposing, 1)
+                        updateEnglishPredictions(englishComposing)
+                    }
                 } else {
                     ic.deleteSurroundingText(1, 0)
                 }
@@ -311,6 +353,12 @@ class InputEngine(private val service: NacreInputMethodService) {
                     commitSelectedCandidate(ic)
                 } else if (composingText.isNotEmpty()) {
                     finishComposing(ic)
+                } else if (englishComposing.isNotEmpty()) {
+                    // Commit English composing text as-is
+                    ic.commitText(englishComposing, 1)
+                    dictionary?.recordEnglishSelection(englishComposing)
+                    englishComposing = ""
+                    clearCandidates()
                 } else {
                     // Use performEditorAction for Search/Send/Go fields
                     val imeAction = editorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
@@ -341,6 +389,19 @@ class InputEngine(private val service: NacreInputMethodService) {
                         // Start conversion
                         startConversion(ic)
                     }
+                } else if (englishComposing.isNotEmpty()) {
+                    // English: space commits the top candidate (or raw text) + space
+                    if (candidates.isNotEmpty()) {
+                        val best = if (selectedCandidateIndex >= 0) candidates[selectedCandidateIndex]
+                                   else candidates[0]
+                        ic.commitText(best.surface + " ", 1)
+                        dictionary?.recordEnglishSelection(best.surface)
+                    } else {
+                        ic.commitText(englishComposing + " ", 1)
+                        dictionary?.recordEnglishSelection(englishComposing)
+                    }
+                    englishComposing = ""
+                    clearCandidates()
                 } else {
                     commitText(" ")
                 }
@@ -379,6 +440,11 @@ class InputEngine(private val service: NacreInputMethodService) {
             is KeyAction.ToggleJapanese -> {
                 if (isConverting) commitSelectedCandidate(ic)
                 if (composingText.isNotEmpty()) finishComposing(ic)
+                if (englishComposing.isNotEmpty()) {
+                    ic.commitText(englishComposing, 1)
+                    englishComposing = ""
+                    clearCandidates()
+                }
                 japaneseEngine.reset()
                 service.layerManager.toggleJapanese()
             }
@@ -431,12 +497,17 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             // Clear composing text first to avoid double input
             // (commitText auto-finishes composing, causing composing + candidate duplication)
-            if (composingText.isNotEmpty()) {
+            if (composingText.isNotEmpty() || englishComposing.isNotEmpty()) {
                 ic.setComposingText("", 0)
             }
             ic.finishComposingText()
             ic.commitText(candidate.surface, 1)
-            dictionary?.recordSelection(candidate)
+            if (englishComposing.isNotEmpty()) {
+                dictionary?.recordEnglishSelection(candidate.surface)
+                englishComposing = ""
+            } else {
+                dictionary?.recordSelection(candidate)
+            }
             composingText = ""
             composingKana = ""
             japaneseEngine.reset()
@@ -601,6 +672,31 @@ class InputEngine(private val service: NacreInputMethodService) {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Update English autocomplete/spellcheck predictions.
+     */
+    private fun updateEnglishPredictions(prefix: String) {
+        if (isPasswordField) return
+        val dict = dictionary ?: return
+        if (prefix.isEmpty()) {
+            clearCandidates()
+            return
+        }
+        englishPredictionJob?.cancel()
+        englishPredictionJob = scope.launch {
+            kotlinx.coroutines.delay(30L) // Faster debounce for English
+            val predictions = withContext(Dispatchers.Default) {
+                dict.predictEnglish(prefix, limit = 15)
+            }
+            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                candidates.clear()
+                candidates.addAll(predictions)
+                isConverting = false
+                selectedCandidateIndex = if (predictions.isNotEmpty()) 0 else -1
             }
         }
     }
@@ -781,4 +877,6 @@ interface DictionaryProvider {
     fun convert(kana: String): List<ConversionCandidate>
     fun predict(kana: String, romaji: String = ""): List<ConversionCandidate>
     fun recordSelection(candidate: ConversionCandidate)
+    fun predictEnglish(prefix: String, limit: Int = 20): List<ConversionCandidate>
+    fun recordEnglishSelection(word: String)
 }

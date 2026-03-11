@@ -36,6 +36,8 @@ fun TrackballView(
     var dotX by remember { mutableFloatStateOf(0f) }
     var dotY by remember { mutableFloatStateOf(0f) }
     var isActive by remember { mutableStateOf(false) }
+    val isVoiceActive = service.voiceInputManager.isListening
+    val voiceRms = service.voiceInputManager.rmsLevel
 
     val stepThreshold = with(density) { 8.dp.toPx() }
     val maxDotOffset = with(density) { 12.dp.toPx() }
@@ -156,7 +158,12 @@ fun TrackballView(
                         }
                         else -> {
                             val now = System.currentTimeMillis()
-                            if (now - lastTapTime < doubleTapTimeoutMs) {
+                            if (service.voiceInputManager.isListening) {
+                                // Single tap stops voice input
+                                service.voiceInputManager.stopListening()
+                                service.feedbackManager.onLongPress()
+                                lastTapTime = 0L
+                            } else if (now - lastTapTime < doubleTapTimeoutMs) {
                                 selectWordAtCursor(service)
                                 lastTapTime = 0L
                             } else {
@@ -181,14 +188,28 @@ fun TrackballView(
             val cy = size.height / 2f
             val r = size.minDimension / 2f
 
-            val ringAlpha = if (isActive) 0.9f else 0.35f
-            val glowRadius = if (isActive) r * 1.1f else r
+            // Voice input mode: ring pulses with RMS level
+            val ringAlpha = when {
+                isVoiceActive -> 0.5f + voiceRms * 0.5f  // 0.5..1.0 based on volume
+                isActive -> 0.9f
+                else -> 0.35f
+            }
+            val glowRadius = when {
+                isVoiceActive -> r * (1.0f + voiceRms * 0.3f)  // Expands with volume
+                isActive -> r * 1.1f
+                else -> r
+            }
+            val ringStroke = when {
+                isVoiceActive -> (2f + voiceRms * 3f) * density.density  // Thicker ring on loud input
+                else -> 2f * density.density
+            }
+            val activeAccent = if (isVoiceActive) Color(0xFFFF4444) else accent
 
             // Outer glow — soft radial gradient behind the ring
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        accent.copy(alpha = if (isActive) 0.2f else 0.06f),
+                        activeAccent.copy(alpha = if (isActive || isVoiceActive) 0.15f + voiceRms * 0.2f else 0.06f),
                         Color.Transparent,
                     ),
                     center = Offset(cx, cy),
@@ -207,35 +228,35 @@ fun TrackballView(
             drawCircle(
                 brush = Brush.sweepGradient(
                     colors = listOf(
-                        accent.copy(alpha = ringAlpha),
-                        accent.copy(alpha = ringAlpha * 0.3f),
-                        accent.copy(alpha = ringAlpha),
-                        accent.copy(alpha = ringAlpha * 0.3f),
-                        accent.copy(alpha = ringAlpha),
+                        activeAccent.copy(alpha = ringAlpha),
+                        activeAccent.copy(alpha = ringAlpha * 0.3f),
+                        activeAccent.copy(alpha = ringAlpha),
+                        activeAccent.copy(alpha = ringAlpha * 0.3f),
+                        activeAccent.copy(alpha = ringAlpha),
                     ),
                     center = Offset(cx, cy),
                 ),
                 radius = r * 0.92f,
-                style = Stroke(width = 2f * density.density),
+                style = Stroke(width = ringStroke),
             )
 
             // Inner subtle ring
             drawCircle(
-                color = accent.copy(alpha = ringAlpha * 0.15f),
+                color = activeAccent.copy(alpha = ringAlpha * 0.15f),
                 radius = r * 0.55f,
                 style = Stroke(width = 0.5f * density.density),
             )
 
-            // Center dot — follows finger slightly
+            // Center dot — mic icon effect when voice active
             val dotCx = cx + dotX
             val dotCy = cy + dotY
-            val dotR = 2.5f * density.density
+            val dotR = if (isVoiceActive) (3f + voiceRms * 2f) * density.density else 2.5f * density.density
 
             // Dot glow
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        accent.copy(alpha = if (isActive) 0.5f else 0.2f),
+                        activeAccent.copy(alpha = if (isActive || isVoiceActive) 0.3f + voiceRms * 0.4f else 0.2f),
                         Color.Transparent,
                     ),
                     center = Offset(dotCx, dotCy),
@@ -247,7 +268,7 @@ fun TrackballView(
 
             // Dot core
             drawCircle(
-                color = accent.copy(alpha = if (isActive) 1f else 0.5f),
+                color = activeAccent.copy(alpha = if (isActive || isVoiceActive) 1f else 0.5f),
                 radius = dotR,
                 center = Offset(dotCx, dotCy),
             )

@@ -47,8 +47,16 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     private val recentHistory = java.util.LinkedList<ConversionCandidate>()
     private val maxHistory = 200
 
-    // English word dictionary
+    // English word dictionary (hiragana reading → English words)
     private val englishDict = HashMap<String, MutableList<DictEntry>>(5000)
+
+    // Full English dictionary: lowercase key → list of DictEntry (surface may have mixed case)
+    private val englishFullDict = HashMap<String, MutableList<DictEntry>>(25000)
+    // Sorted keys for binary-search prefix matching
+    private var englishSortedKeys: Array<String> = emptyArray()
+    // English word learning: "prevWord→word" → count (bigram boost)
+    private val englishBigramBoost = ConcurrentHashMap<String, Int>(200)
+    private var lastCommittedEnglish: String = ""
 
     // N-gram context: last 2 committed surfaces
     private var lastCommittedSurface: String = ""
@@ -84,6 +92,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         loadSlangDictionary()
         loadEnglishDict()
         buildRomajiEnglishIndex()
+        loadEnglishFullDict()
         loadUserBoost()
 
         loaded = true
@@ -703,6 +712,175 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         } catch (e: Exception) {
             Log.i("NacreDictionary", "No English dictionary found (optional)")
         }
+    }
+
+    private fun loadEnglishFullDict() {
+        try {
+            context.assets.open("dict/english_full.tsv").use { stream ->
+                BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
+                    reader.forEachLine { line ->
+                        if (line.isBlank() || line.startsWith('#')) return@forEachLine
+                        val parts = line.split('\t')
+                        if (parts.size >= 3) {
+                            val key = parts[0]       // lowercase key
+                            val surface = parts[1]    // display form (may have mixed case)
+                            val cost = parts[2].toIntOrNull() ?: 8000
+                            englishFullDict.getOrPut(key) { mutableListOf() }
+                                .add(DictEntry(surface, cost))
+                        }
+                    }
+                }
+            }
+            englishSortedKeys = englishFullDict.keys.toTypedArray().also { it.sort() }
+            Log.i("NacreDictionary", "English full dict loaded: ${englishFullDict.size} keys, ${englishSortedKeys.size} sorted")
+        } catch (e: Exception) {
+            Log.i("NacreDictionary", "No english_full.tsv found (optional)")
+        }
+    }
+
+    /**
+     * Predict English words from prefix input.
+     * Returns autocomplete candidates sorted by cost (frequency).
+     */
+    override fun predictEnglish(prefix: String, limit: Int): List<ConversionCandidate> {
+        if (prefix.length < 1) return emptyList()
+        val prefixLower = prefix.lowercase()
+        val results = mutableListOf<ConversionCandidate>()
+
+        // 1. Exact match
+        val exact = englishFullDict[prefixLower]
+        if (exact != null) {
+            for (entry in exact) {
+                results.add(ConversionCandidate(
+                    surface = entry.surface,
+                    reading = prefix,
+                    cost = entry.cost - 2000,  // Strong bonus for exact match
+                ))
+            }
+        }
+
+        // 2. Prefix match via binary search on sorted keys
+        val startIdx = englishSortedKeys.binarySearchInsertionPoint(prefixLower)
+        var count = 0
+        for (i in startIdx until englishSortedKeys.size) {
+            val key = englishSortedKeys[i]
+            if (!key.startsWith(prefixLower)) break
+            if (key == prefixLower) continue  // Already handled as exact
+            val entries = englishFullDict[key] ?: continue
+            for (entry in entries.take(2)) {
+                val lengthPenalty = (key.length - prefixLower.length) * 100
+                results.add(ConversionCandidate(
+                    surface = entry.surface,
+                    reading = prefix,
+                    cost = entry.cost + lengthPenalty,
+                ))
+            }
+            count++
+            if (count >= limit * 2) break
+        }
+
+        // 3. Spell correction (edit distance 1) for inputs >= 3 chars
+        if (results.size < 5 && prefixLower.length >= 3) {
+            val corrections = spellCorrect(prefixLower, limit = 5)
+            for (c in corrections) {
+                if (results.none { it.surface.equals(c.surface, ignoreCase = true) }) {
+                    results.add(c)
+                }
+            }
+        }
+
+        // 4. Apply English bigram boost
+        if (lastCommittedEnglish.isNotEmpty()) {
+            for (i in results.indices) {
+                val bigramKey = "${lastCommittedEnglish.lowercase()}→${results[i].surface.lowercase()}"
+                val boost = englishBigramBoost[bigramKey] ?: 0
+                if (boost > 0) {
+                    results[i] = results[i].copy(cost = results[i].cost - minOf(boost * 800, 3000))
+                }
+            }
+        }
+
+        return results.sortedBy { it.cost }.take(limit)
+    }
+
+    /**
+     * Record English word selection for bigram learning.
+     */
+    override fun recordEnglishSelection(word: String) {
+        if (lastCommittedEnglish.isNotEmpty()) {
+            val key = "${lastCommittedEnglish.lowercase()}→${word.lowercase()}"
+            val count = englishBigramBoost.merge(key, 1) { old, _ -> minOf(old + 1, 5) } ?: 1
+        }
+        lastCommittedEnglish = word
+    }
+
+    /**
+     * Spell correction via edit distance 1 (deletion, substitution, insertion, transposition).
+     */
+    private fun spellCorrect(input: String, limit: Int): List<ConversionCandidate> {
+        val results = mutableListOf<ConversionCandidate>()
+        val seen = mutableSetOf<String>()
+
+        // Deletions: remove one char
+        for (i in input.indices) {
+            val candidate = input.removeRange(i, i + 1)
+            if (candidate.length >= 2 && seen.add(candidate)) {
+                val entries = englishFullDict[candidate]
+                if (entries != null) {
+                    for (e in entries.take(1)) {
+                        results.add(ConversionCandidate(e.surface, input, e.cost + 3000))
+                    }
+                }
+            }
+        }
+
+        // Substitutions: replace one char
+        for (i in input.indices) {
+            for (c in 'a'..'z') {
+                if (c == input[i]) continue
+                val candidate = input.replaceRange(i, i + 1, c.toString())
+                if (seen.add(candidate)) {
+                    val entries = englishFullDict[candidate]
+                    if (entries != null) {
+                        for (e in entries.take(1)) {
+                            results.add(ConversionCandidate(e.surface, input, e.cost + 3000))
+                        }
+                    }
+                }
+            }
+            if (results.size >= limit) break
+        }
+
+        // Transpositions: swap adjacent chars
+        for (i in 0 until input.length - 1) {
+            val candidate = buildString {
+                append(input, 0, i)
+                append(input[i + 1])
+                append(input[i])
+                if (i + 2 < input.length) append(input, i + 2, input.length)
+            }
+            if (seen.add(candidate)) {
+                val entries = englishFullDict[candidate]
+                if (entries != null) {
+                    for (e in entries.take(1)) {
+                        results.add(ConversionCandidate(e.surface, input, e.cost + 2500))
+                    }
+                }
+            }
+        }
+
+        return results.sortedBy { it.cost }.take(limit)
+    }
+
+    /** Binary search for insertion point in sorted array. */
+    private fun Array<String>.binarySearchInsertionPoint(prefix: String): Int {
+        var lo = 0
+        var hi = size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (this[mid] < prefix) lo = mid + 1 else hi = mid
+        }
+        return lo
     }
 
     private fun englishMatch(kana: String, limit: Int): List<ConversionCandidate> {
