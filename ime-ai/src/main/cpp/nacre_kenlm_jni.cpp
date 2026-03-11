@@ -17,7 +17,8 @@
 static std::mutex g_mutex;
 
 #ifdef KENLM_AVAILABLE
-static lm::ngram::Model* g_model = nullptr;
+// Use base::Model to support both probing and trie formats
+static lm::base::Model* g_model = nullptr;
 #endif
 static bool g_model_loaded = false;
 
@@ -40,7 +41,8 @@ Java_space_manus_nacre_ai_KenLmJni_loadModel(JNIEnv* env, jobject, jstring model
     try {
         lm::ngram::Config config;
         config.load_method = util::LAZY; // Memory-mapped lazy loading for mobile
-        g_model = new lm::ngram::Model(path, config);
+        // LoadVirtual auto-detects probing/trie/etc format
+        g_model = lm::ngram::LoadVirtual(path, config);
         g_model_loaded = true;
         LOGI("KenLM model loaded successfully (order=%d)", (int)g_model->Order());
     } catch (const std::exception& e) {
@@ -99,13 +101,15 @@ Java_space_manus_nacre_ai_KenLmJni_scoreSentence(JNIEnv* env, jobject, jstring s
     std::istringstream iss(sentence);
     std::string word;
     while (iss >> word) {
-        total_score += g_model->BaseScore(&state, g_model->GetVocabulary().Index(word), &out_state);
+        lm::FullScoreReturn ret = g_model->BaseFullScore(&state, g_model->BaseVocabulary().Index(word), &out_state);
+        total_score += ret.prob;
         state = out_state;
         word_count++;
     }
 
     // End-of-sentence
-    total_score += g_model->BaseScore(&state, g_model->GetVocabulary().EndSentence(), &out_state);
+    lm::FullScoreReturn eos_ret = g_model->BaseFullScore(&state, g_model->BaseVocabulary().EndSentence(), &out_state);
+    total_score += eos_ret.prob;
 
     env->ReleaseStringUTFChars(sentence_str, sentence);
     return total_score;
@@ -140,10 +144,12 @@ Java_space_manus_nacre_ai_KenLmJni_scoreBatch(JNIEnv* env, jobject, jobjectArray
         std::istringstream iss(sentence);
         std::string word;
         while (iss >> word) {
-            total += g_model->BaseScore(&state, g_model->GetVocabulary().Index(word), &out_state);
+            lm::FullScoreReturn ret = g_model->BaseFullScore(&state, g_model->BaseVocabulary().Index(word), &out_state);
+            total += ret.prob;
             state = out_state;
         }
-        total += g_model->BaseScore(&state, g_model->GetVocabulary().EndSentence(), &out_state);
+        lm::FullScoreReturn eos_ret = g_model->BaseFullScore(&state, g_model->BaseVocabulary().EndSentence(), &out_state);
+        total += eos_ret.prob;
 
         scores[i] = total;
 
@@ -179,11 +185,13 @@ Java_space_manus_nacre_ai_KenLmJni_perplexity(JNIEnv* env, jobject thiz, jstring
     std::istringstream iss(sentence);
     std::string word;
     while (iss >> word) {
-        total_score += g_model->BaseScore(&state, g_model->GetVocabulary().Index(word), &out_state);
+        lm::FullScoreReturn ret = g_model->BaseFullScore(&state, g_model->BaseVocabulary().Index(word), &out_state);
+        total_score += ret.prob;
         state = out_state;
         word_count++;
     }
-    total_score += g_model->BaseScore(&state, g_model->GetVocabulary().EndSentence(), &out_state);
+    lm::FullScoreReturn eos_ret = g_model->BaseFullScore(&state, g_model->BaseVocabulary().EndSentence(), &out_state);
+    total_score += eos_ret.prob;
     word_count++; // EOS counts
 
     env->ReleaseStringUTFChars(sentence_str, sentence);
