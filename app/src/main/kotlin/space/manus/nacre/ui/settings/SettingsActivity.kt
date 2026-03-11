@@ -2,11 +2,15 @@ package space.manus.nacre.ui.settings
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -153,6 +157,12 @@ fun NacreSettingsScreen() {
         // --- Auto Convert ---
         SectionHeader("Auto Convert")
         AutoConvertSection(config)
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // --- KenLM Model ---
+        SectionHeader("Language Model")
+        KenLmModelSection()
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -641,6 +651,83 @@ private fun AutoConvertSection(config: ConfigRepository) {
                     checkedTrackColor = NacreAccent.copy(alpha = 0.3f),
                 ),
             )
+        }
+    }
+}
+
+@Composable
+private fun KenLmModelSection() {
+    val context = LocalContext.current
+    val modelsDir = remember { File(context.filesDir, "models") }
+    val modelFile = remember { File(modelsDir, "japanese-5gram.klm") }
+    var modelExists by remember { mutableStateOf(modelFile.exists()) }
+    var modelSize by remember {
+        mutableStateOf(if (modelFile.exists()) modelFile.length() / 1024 / 1024 else 0L)
+    }
+    var importing by remember { mutableStateOf(false) }
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importing = true
+        Thread {
+            try {
+                modelsDir.mkdirs()
+                val tmpFile = File(modelsDir, "japanese-5gram.klm.tmp")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    tmpFile.outputStream().use { output ->
+                        input.copyTo(output, bufferSize = 65536)
+                    }
+                }
+                tmpFile.renameTo(modelFile)
+                val sizeMb = modelFile.length() / 1024 / 1024
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    modelExists = true
+                    modelSize = sizeMb
+                    importing = false
+                    Toast.makeText(context, "KenLM model imported (${sizeMb}MB). Restart keyboard to activate.", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    importing = false
+                    Toast.makeText(context, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = NacreSurface),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            if (modelExists) {
+                Text("KenLM 5-gram: Installed (${modelSize}MB)", color = NacreAccent, fontSize = 14.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Japanese language model active", color = NacreTextDim, fontSize = 12.sp)
+            } else {
+                Text("KenLM 5-gram: Not installed", color = NacreText, fontSize = 14.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Import a .klm model file for better Japanese conversion", color = NacreTextDim, fontSize = 12.sp)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = { launcher.launch(arrayOf("*/*")) },
+                enabled = !importing,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NacreAccent,
+                    contentColor = Color.Black,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (importing) "Importing..."
+                    else if (modelExists) "Replace Model"
+                    else "Import Model (.klm)"
+                )
+            }
         }
     }
 }
