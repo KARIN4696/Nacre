@@ -138,15 +138,32 @@ class NacreInputMethodService :
 
             // Lazy-load KenLM model if available
             try {
-                val modelFile = java.io.File(filesDir, "models/japanese-5gram.klm")
-                if (modelFile.exists()) {
+                val internalModel = java.io.File(filesDir, "models/japanese-5gram.klm")
+                // Also check external storage (for sideloading without root)
+                val externalCandidates = listOf(
+                    java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS), "kenlm-light/japanese-5gram.klm"),
+                    java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS), "japanese-5gram.klm"),
+                )
+                // Copy from external to internal if not yet present
+                if (!internalModel.exists()) {
+                    val extSource = externalCandidates.firstOrNull { it.exists() }
+                    if (extSource != null) {
+                        android.util.Log.i("NacreIME", "Copying KenLM model from ${extSource.absolutePath}...")
+                        internalModel.parentFile?.mkdirs()
+                        extSource.copyTo(internalModel, overwrite = true)
+                        android.util.Log.i("NacreIME", "KenLM model copied to internal storage (${internalModel.length() / 1024 / 1024}MB)")
+                    }
+                }
+                if (internalModel.exists()) {
                     val scorer = KenLmScorer()
-                    if (scorer.load(modelFile.absolutePath)) {
+                    if (scorer.load(internalModel.absolutePath)) {
                         dict.kenLmScorer = scorer
-                        android.util.Log.i("NacreIME", "KenLM model loaded: ${modelFile.name}")
+                        android.util.Log.i("NacreIME", "KenLM model loaded: ${internalModel.name}")
                     }
                 } else {
-                    android.util.Log.i("NacreIME", "KenLM model not found at ${modelFile.absolutePath} (optional)")
+                    android.util.Log.i("NacreIME", "KenLM model not found (optional)")
                 }
             } catch (e: Exception) {
                 android.util.Log.w("NacreIME", "KenLM load failed (optional)", e)
