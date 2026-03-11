@@ -93,18 +93,23 @@ class WhisperService : Service() {
     }
 
     /**
-     * Record ~5 seconds of audio at 16kHz mono for Whisper.
+     * Record up to 30 seconds of audio at 16kHz mono for Whisper.
+     * Uses VAD (voice activity detection) to stop when silence exceeds 5 seconds.
      */
     private fun recordAudio(): FloatArray {
         val sampleRate = 16000
-        val durationSec = 5
+        val maxDurationSec = 30
+        val silenceThresholdSec = 5 // Stop after 5s of silence
+        val silenceThreshold = 0.005f // RMS below this = silence
+        val chunkSamples = sampleRate / 4 // 250ms chunks for VAD
+
         val bufferSize = maxOf(
             AudioRecord.getMinBufferSize(
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_FLOAT,
             ),
-            sampleRate * durationSec * 4, // float32 = 4 bytes
+            sampleRate * maxDurationSec * 4,
         )
 
         val recorder = AudioRecord(
@@ -115,14 +120,35 @@ class WhisperService : Service() {
             bufferSize,
         )
 
-        val samples = FloatArray(sampleRate * durationSec)
+        val samples = FloatArray(sampleRate * maxDurationSec)
         var offset = 0
+        var silentChunks = 0
+        val maxSilentChunks = silenceThresholdSec * 4 // 5s * 4 chunks/s = 20 chunks
+        var hasVoice = false
 
         try {
             recorder.startRecording()
             while (offset < samples.size && isRecognizing) {
-                val read = recorder.read(samples, offset, samples.size - offset, AudioRecord.READ_BLOCKING)
-                if (read > 0) offset += read else break
+                val toRead = minOf(chunkSamples, samples.size - offset)
+                val read = recorder.read(samples, offset, toRead, AudioRecord.READ_BLOCKING)
+                if (read <= 0) break
+                offset += read
+
+                // VAD: compute RMS of this chunk
+                var sumSq = 0f
+                for (i in (offset - read) until offset) {
+                    sumSq += samples[i] * samples[i]
+                }
+                val rms = kotlin.math.sqrt(sumSq / read)
+
+                if (rms < silenceThreshold) {
+                    silentChunks++
+                    // Only stop on silence AFTER we've heard some voice
+                    if (hasVoice && silentChunks >= maxSilentChunks) break
+                } else {
+                    hasVoice = true
+                    silentChunks = 0
+                }
             }
         } finally {
             recorder.stop()

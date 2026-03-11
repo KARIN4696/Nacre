@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
 import space.manus.nacre.ai.KenLmScorer
@@ -11,28 +13,29 @@ import space.manus.nacre.ai.KenLmScorer
 /**
  * Nacre Japanese Dictionary with POS-aware Viterbi conversion.
  *
- * Uses Mozc OSS dictionary with POS group IDs and a grouped connection cost matrix
- * for accurate word segmentation approaching Google日本語入力 quality.
+ * Uses Mozc OSS dictionary with full 2670 POS IDs and the original
+ * 2670×2670 connection cost matrix for maximum conversion accuracy.
  *
- * Dictionary format: reading\tsurface\tleft_group\tright_group\tcost
- * Connection matrix: 14×14 POS group transition costs
+ * Dictionary format: reading\tsurface\tleft_id\tright_id\tcost
+ * Connection matrix: binary 2670×2670 int16 (connection.bin)
  *
- * POS groups:
- *   0=BOS/EOS 1=名詞 2=動詞 3=形容詞 4=助動詞 5=助詞
- *   6=副詞 7=連体詞 8=接続詞 9=感動詞 10=接頭詞 11=記号
- *   12=フィラー 13=その他
+ * Mozc POS ID ranges:
+ *   0=BOS/EOS, 2..11=フィラー, 12..28=副詞, 29..267=助動詞,
+ *   268..433=助詞, 434..1840=動詞, 1841..2193=名詞,
+ *   2194..2588=形容詞, 2589..2590=感動詞, 2591..2593=接続詞,
+ *   2594..2640=接頭詞, 2641..2656=記号, 2657..2669=連体詞
  */
 class NacreDictionary(private val context: Context) : DictionaryProvider {
 
     // reading → list of entries with POS info
-    private val dict = HashMap<String, MutableList<DictEntry>>(4000000)
+    private val dict = HashMap<String, MutableList<DictEntry>>(3000000)
 
     // Sorted readings for prefix search
     private var sortedReadings: Array<String> = emptyArray()
 
-    // POS group connection cost matrix [left_group][right_group]
-    private var connectionCost: Array<IntArray> = emptyArray()
-    private var numGroups = 14
+    // Full Mozc connection cost matrix as flat ShortArray [right_id * numIds + left_id]
+    private var connectionCostFlat: ShortArray = ShortArray(0)
+    private var numIds = 0
 
     // User learning: boost for selected candidates (thread-safe)
     private val userBoost = ConcurrentHashMap<String, Int>(1000)
@@ -58,12 +61,15 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     private val englishBigramBoost = ConcurrentHashMap<String, Int>(200)
     private var lastCommittedEnglish: String = ""
 
-    // N-gram context: last 2 committed surfaces
-    private var lastCommittedSurface: String = ""
-    private var secondLastCommittedSurface: String = ""
+    // N-gram context: last 4 committed surfaces (for KenLM 5-gram)
+    private val committedContext = ArrayDeque<String>(4)
 
     // Last committed right POS group (for connection cost to next word)
     private var lastRightGroup: Int = 0  // BOS/EOS
+
+    // Convenience accessors for backward compat
+    private val lastCommittedSurface: String get() = committedContext.firstOrNull() ?: ""
+    private val secondLastCommittedSurface: String get() = committedContext.getOrNull(1) ?: ""
 
     // KenLM 5-gram language model scorer (optional, loaded from ime-ai)
     @Volatile
@@ -90,6 +96,8 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         loadConnectionMatrix()
         loadMozcDictionary()
         loadSlangDictionary()
+        loadSupplementaryDict("dict/emoji_kaomoji.tsv", "emoji/kaomoji")
+        loadSupplementaryDict("dict/symbols.tsv", "symbols")
         loadEnglishDict()
         buildRomajiEnglishIndex()
         loadEnglishFullDict()
@@ -100,34 +108,53 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
     private fun loadConnectionMatrix() {
         try {
-            var rowIdx = 0
+            context.assets.open("dict/connection.bin").use { stream ->
+                val bytes = stream.readBytes()
+                val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+                numIds = buf.int  // First 4 bytes: uint32 num_ids
+                val total = numIds * numIds
+                connectionCostFlat = ShortArray(total)
+                for (i in 0 until total) {
+                    connectionCostFlat[i] = buf.short
+                }
+                Log.i("NacreDictionary", "Connection matrix loaded: ${numIds}x${numIds} (${bytes.size / 1024}KB)")
+            }
+        } catch (e: Exception) {
+            Log.e("NacreDictionary", "Failed to load binary connection matrix, trying TSV fallback", e)
+            loadConnectionMatrixTsvFallback()
+        }
+    }
+
+    private fun loadConnectionMatrixTsvFallback() {
+        try {
+            val rows = mutableListOf<IntArray>()
+            var n = 14
             context.assets.open("dict/connection_group.tsv").use { stream ->
                 BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
                     reader.forEachLine { line ->
                         if (line.isBlank() || line.startsWith('#')) return@forEachLine
                         val trimmed = line.trim()
-                        if (connectionCost.isEmpty()) {
-                            numGroups = trimmed.toIntOrNull() ?: 14
-                            connectionCost = Array(numGroups) { IntArray(numGroups) }
+                        if (rows.isEmpty() && trimmed.toIntOrNull() != null) {
+                            n = trimmed.toInt()
                             return@forEachLine
                         }
-                        if (rowIdx < numGroups) {
-                            val values = trimmed.split('\t')
-                            for (j in values.indices) {
-                                if (j < numGroups) {
-                                    connectionCost[rowIdx][j] = values[j].toIntOrNull() ?: 5000
-                                }
-                            }
-                            rowIdx++
-                        }
+                        val values = trimmed.split('\t').map { it.toIntOrNull() ?: 5000 }
+                        rows.add(values.toIntArray())
                     }
                 }
             }
-            Log.i("NacreDictionary", "Connection matrix loaded: ${numGroups}x${numGroups}")
-        } catch (e: Exception) {
-            Log.e("NacreDictionary", "Failed to load connection matrix, using defaults", e)
-            numGroups = 14
-            connectionCost = Array(numGroups) { IntArray(numGroups) { 5000 } }
+            numIds = n
+            connectionCostFlat = ShortArray(n * n)
+            for (r in 0 until minOf(n, rows.size)) {
+                for (c in 0 until minOf(n, rows[r].size)) {
+                    connectionCostFlat[r * n + c] = rows[r][c].coerceIn(-32768, 32767).toShort()
+                }
+            }
+            Log.i("NacreDictionary", "Connection matrix (TSV fallback): ${n}x${n}")
+        } catch (e2: Exception) {
+            Log.e("NacreDictionary", "TSV fallback also failed", e2)
+            numIds = 0
+            connectionCostFlat = ShortArray(0)
         }
     }
 
@@ -218,6 +245,39 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         }
     }
 
+    /**
+     * Load a supplementary TSV dictionary (emoji, symbols, etc).
+     * Format: reading\tsurface\tleft_id\tright_id\tcost
+     */
+    private fun loadSupplementaryDict(assetPath: String, label: String) {
+        try {
+            context.assets.open(assetPath).use { stream ->
+                BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
+                    var count = 0
+                    reader.forEachLine { line ->
+                        if (line.isBlank() || line.startsWith('#')) return@forEachLine
+                        val parts = line.split('\t')
+                        if (parts.size >= 5) {
+                            val reading = parts[0]
+                            val surface = parts[1]
+                            val leftGroup = parts[2].toIntOrNull() ?: 2641
+                            val rightGroup = parts[3].toIntOrNull() ?: 2641
+                            val cost = parts[4].toIntOrNull() ?: 5500
+                            val entries = dict.getOrPut(reading) { mutableListOf() }
+                            if (entries.none { it.surface == surface }) {
+                                entries.add(DictEntry(surface, cost, leftGroup, rightGroup))
+                                count++
+                            }
+                        }
+                    }
+                    Log.i("NacreDictionary", "$label dict loaded: $count entries")
+                }
+            }
+        } catch (e: Exception) {
+            Log.i("NacreDictionary", "No $label dictionary found (optional)")
+        }
+    }
+
     // --- DictionaryProvider implementation ---
 
     override fun convert(kana: String): List<ConversionCandidate> {
@@ -269,33 +329,39 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
-        // 4. 3-way segmentation for longer inputs (e.g. きょうはいいてんきですね → 今日は+いい+天気ですね)
+        // 4. 3-way segmentation for longer inputs — consider top 3 entries per segment
         if (results.size < 15 && kana.length >= 6) {
             outer@ for (s1 in 2..(kana.length - 4)) {
                 val seg1 = kana.substring(0, s1)
-                val e1 = dict[seg1]?.firstOrNull() ?: continue
+                val entries1 = dict[seg1]?.take(3) ?: continue
                 for (s2 in (s1 + 2)..(kana.length - 2)) {
                     val seg2 = kana.substring(s1, s2)
                     val seg3 = kana.substring(s2)
-                    val e2 = dict[seg2]?.firstOrNull() ?: continue
-                    val e3 = dict[seg3]?.firstOrNull() ?: continue
-                    val combined = e1.surface + e2.surface + e3.surface
-                    if (seen.add(combined)) {
-                        val cost = e1.cost + e2.cost + e3.cost +
-                            getConnectionCost(e1.rightGroup, e2.leftGroup) +
-                            getConnectionCost(e2.rightGroup, e3.leftGroup)
-                        results.add(ConversionCandidate(surface = combined, reading = kana, cost = cost))
+                    val entries2 = dict[seg2]?.take(3) ?: continue
+                    val entries3 = dict[seg3]?.take(3) ?: continue
+                    for (e1 in entries1) {
+                        for (e2 in entries2) {
+                            for (e3 in entries3) {
+                                val combined = e1.surface + e2.surface + e3.surface
+                                if (seen.add(combined)) {
+                                    val cost = e1.cost + e2.cost + e3.cost +
+                                        getConnectionCost(e1.rightGroup, e2.leftGroup) +
+                                        getConnectionCost(e2.rightGroup, e3.leftGroup)
+                                    results.add(ConversionCandidate(surface = combined, reading = kana, cost = cost))
+                                }
+                                if (results.size >= 25) break@outer
+                            }
+                        }
                     }
-                    if (results.size >= 18) break@outer
                 }
             }
         }
 
-        // 5. Katakana / Hiragana as-is
+        // 5. Katakana / Hiragana as-is (boost katakana for loanword-heavy readings)
         val katakana = hiraganaToKatakana(kana)
         if (katakana != kana && seen.add(katakana)) {
-            val maxCost = results.maxOfOrNull { it.cost } ?: 5000
-            results.add(ConversionCandidate(surface = katakana, reading = kana, cost = maxCost + 500))
+            val katakanaCost = estimateKatakanaCost(kana, results)
+            results.add(ConversionCandidate(surface = katakana, reading = kana, cost = katakanaCost))
         }
         if (seen.add(kana)) {
             val maxCost = results.maxOfOrNull { it.cost } ?: 5000
@@ -441,8 +507,8 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             val trigramKey = "$secondLastCommittedSurface→$lastCommittedSurface→$key"
             trigramBoost[trigramKey] = (trigramBoost[trigramKey] ?: 0) + 1
         }
-        secondLastCommittedSurface = lastCommittedSurface
-        lastCommittedSurface = candidate.surface
+        committedContext.addFirst(candidate.surface)
+        while (committedContext.size > 4) committedContext.removeLast()
 
         // Update POS context from the selected candidate's dictionary entry
         val entries = dict[candidate.reading]
@@ -460,8 +526,8 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     }
 
     fun updateContext(surface: String) {
-        secondLastCommittedSurface = lastCommittedSurface
-        lastCommittedSurface = surface
+        committedContext.addFirst(surface)
+        while (committedContext.size > 4) committedContext.removeLast()
         lastRightGroup = 0 // BOS/EOS for raw text
     }
 
@@ -549,17 +615,16 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
     /**
      * Get the POS-based connection cost between two words.
-     * Uses the grouped connection cost matrix from Mozc data.
+     * Uses the full Mozc 2670×2670 connection cost matrix.
      */
-    private fun getConnectionCost(prevRightGroup: Int, currLeftGroup: Int): Int {
-        if (connectionCost.isEmpty()) return DEFAULT_CONNECTION_COST
-        val pg = prevRightGroup.coerceIn(0, numGroups - 1)
-        val cg = currLeftGroup.coerceIn(0, numGroups - 1)
-        val raw = connectionCost[pg][cg]
-        // Scale: Mozc costs are ~3000-11000.
-        // Use /4 for finer control: POS transitions guide but dictionary cost dominates.
-        // With expanded dict (cost<10500), /4 prevents connection cost from overwhelming.
-        return raw / 4
+    private fun getConnectionCost(prevRightId: Int, currLeftId: Int): Int {
+        if (connectionCostFlat.isEmpty() || numIds == 0) return DEFAULT_CONNECTION_COST
+        val r = prevRightId.coerceIn(0, numIds - 1)
+        val l = currLeftId.coerceIn(0, numIds - 1)
+        val idx = r * numIds + l
+        if (idx >= connectionCostFlat.size) return DEFAULT_CONNECTION_COST
+        // Mozc connection costs range roughly -1000..32000; /3 scaling lets the matrix guide more
+        return connectionCostFlat[idx].toInt() / 3
     }
 
     // --- Boost calculation ---
@@ -574,11 +639,11 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             trigramBoost["$secondLastCommittedSurface→$lastCommittedSurface→$key"] ?: 0
         } else 0
 
-        val unigramBoostVal = minOf(unigramCount, 5) * 2000   // cap at 5 to prevent over-learning
-        val bigramBoostVal = minOf(bigramCount, 4) * 3000      // cap at 4
-        val trigramBoostVal = minOf(trigramCount, 3) * 4000    // cap at 3
-        // Floor at 100 instead of 0 to preserve relative ordering among boosted candidates
-        return maxOf(100, baseCost - unigramBoostVal - bigramBoostVal - trigramBoostVal)
+        val unigramBoostVal = minOf(unigramCount, 5) * 1200
+        val bigramBoostVal = minOf(bigramCount, 4) * 2000
+        val trigramBoostVal = minOf(trigramCount, 3) * 3000
+        val totalBoost = minOf(unigramBoostVal + bigramBoostVal + trigramBoostVal, 15000)
+        return maxOf(100, baseCost - totalBoost)
     }
 
     /**
@@ -590,10 +655,9 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         val entries = dict[reading]
         val entry = entries?.firstOrNull { it.surface == surface } ?: return baseCost
         val connCost = getConnectionCost(lastRightGroup, entry.leftGroup)
-        // Neutral point ~1875 (average connection cost / 4)
-        // Strong natural transition (e.g. 名詞→助詞): connCost ≈ 500 → bonus -687
-        // Unnatural (e.g. 助詞→助詞): connCost ≈ 2750 → penalty +437
-        return baseCost + (connCost - 1875) / 2
+        // With full Mozc matrix (/3 scaled): natural ~650, unnatural ~4000
+        // Neutral point 900 (shifted down to reward good transitions)
+        return baseCost + (connCost - 900) / 2
     }
 
     /**
@@ -604,33 +668,25 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     private fun kenLmRescore(candidates: MutableList<ConversionCandidate>) {
         val scorer = kenLmScorer ?: return
         if (!scorer.isReady() || candidates.isEmpty()) return
-        // Skip LM scoring for short inputs (not enough context) or tiny candidate lists
         if (candidates.size <= 2) return
-        // Only score top candidates for performance
-        val maxScore = 20.coerceAtMost(candidates.size)
+        val maxScore = 30.coerceAtMost(candidates.size)
 
-        val precedingContext = if (lastCommittedSurface.isNotEmpty()) {
-            val prev2 = if (secondLastCommittedSurface.isNotEmpty()) "$secondLastCommittedSurface " else ""
-            "$prev2$lastCommittedSurface"
-        } else ""
+        // Use up to 4 words of context for KenLM 5-gram
+        val precedingContext = committedContext.reversed().joinToString(" ")
 
-        // Build segment lists for top candidates only
         val segmentLists = candidates.take(maxScore).map { c ->
             c.segments.ifEmpty { listOf(c.surface) }
         }
 
         val scores = scorer.scoreBatch(segmentLists, precedingContext)
 
-        // Blend LM scores with existing costs
         for (i in 0 until maxScore) {
             if (i >= scores.size) break
             // scores[i] is log10 prob (negative; higher = better)
-            // Convert to cost adjustment: more likely sentences get lower cost
-            val lmBonus = (scores[i] * -KENLM_WEIGHT).toInt()
-            // Normalize by word count to avoid penalizing longer candidates
+            // Use sqrt normalization to mildly favor longer sequences without over-penalizing
             val wordCount = segmentLists[i].size.coerceAtLeast(1)
-            val normalizedBonus = lmBonus / wordCount
-            candidates[i] = candidates[i].copy(cost = candidates[i].cost + normalizedBonus)
+            val lmBonus = (scores[i] * -KENLM_WEIGHT / kotlin.math.sqrt(wordCount.toFloat())).toInt()
+            candidates[i] = candidates[i].copy(cost = candidates[i].cost + lmBonus)
         }
     }
 
@@ -643,7 +699,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 var cost = applyBoost(kana, entry.surface, entry.cost)
                 cost = posContextCost(kana, entry.surface, cost)
                 // Suppress function words (助詞・助動詞) appearing as sole candidates for 2+ char input
-                if (kana.length >= 2 && entry.leftGroup in 4..5 && entry.surface.length <= 1) {
+                if (kana.length >= 2 && isFunctionWord(entry.leftGroup) && entry.surface.length <= 1) {
                     cost += 2000
                 }
                 ConversionCandidate(
@@ -1078,27 +1134,58 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     // --- Viterbi segmentation with POS connection costs ---
 
     companion object {
-        private const val DEFAULT_CONNECTION_COST = 1500
-        // KenLM weight: how much 1 log10 point affects cost (2000 ≈ bigram boost equivalent)
-        private const val KENLM_WEIGHT = 2000f
+        private const val DEFAULT_CONNECTION_COST = 2000
+        // KenLM weight for post-hoc rescoring
+        private const val KENLM_WEIGHT = 2500f
+        // KenLM weight inside Viterbi (lower than post-hoc to avoid dominating beam search)
+        private const val VITERBI_LM_WEIGHT = 1500f
+
+        // Mozc POS ID range checks (from id.def)
+        fun isNoun(id: Int) = id in 1841..2193
+        fun isVerb(id: Int) = id in 434..1840
+        fun isAdjective(id: Int) = id in 2194..2588
+        fun isAuxVerb(id: Int) = id in 29..267
+        fun isParticle(id: Int) = id in 268..433
+        fun isContentWord(id: Int) = id in 434..2588  // 動詞+名詞+形容詞
+        fun isFunctionWord(id: Int) = id in 29..433   // 助動詞+助詞
+        fun isAdverb(id: Int) = id in 12..28
+        fun isConjunction(id: Int) = id in 2591..2593
+        fun isInterjection(id: Int) = id in 2589..2590
+        fun isSymbol(id: Int) = id in 2641..2656
     }
 
     private fun lengthBonus(segLen: Int): Int {
         return when {
-            segLen >= 8 -> -1800  // 長い複合語・固有名詞を強く優遇
-            segLen >= 7 -> -1500
+            segLen >= 8 -> -2000
+            segLen >= 7 -> -1600
             segLen >= 6 -> -1200
             segLen >= 5 -> -800
             segLen >= 4 -> -500
             segLen >= 3 -> -200
             segLen == 2 -> 0
-            else -> 500  // 1文字セグメントをより強くペナルティ
+            else -> 800  // Single-char segments heavily penalized (particles handled by connection cost)
         }
     }
 
     private fun viterbiConvert(kana: String): List<ConversionCandidate> {
         val n = kana.length
         if (n == 0) return emptyList()
+
+        // Check if KenLM incremental scoring is available
+        val scorer = kenLmScorer
+        val lmAvailable = scorer != null && scorer.isReady() && scorer.getStateSize() > 0
+        val lmBosState = if (lmAvailable) scorer!!.getBeginState() else null
+        // Build preceding context state by feeding committed words through the LM
+        val lmInitState: ByteArray? = if (lmAvailable && lmBosState != null && committedContext.isNotEmpty()) {
+            var state: ByteArray = lmBosState
+            for (word in committedContext.reversed()) {
+                val result = scorer!!.scoreWordIncremental(state, word)
+                state = result?.second ?: state
+            }
+            state
+        } else {
+            lmBosState
+        }
 
         data class Node(
             val cost: Int,
@@ -1107,11 +1194,11 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             val reading: String,
             val segCount: Int,
             val rightGroup: Int,
-            // Backpointer to previous node for path reconstruction (avoids GC pressure from list copies)
             val prevNode: Node?,
+            val lmState: ByteArray?,   // KenLM state for incremental scoring
+            val lmScore: Float,        // Cumulative LM log10 prob
         )
 
-        // Reconstruct segments list from backpointer chain
         fun reconstructSegments(node: Node): List<String> {
             val segments = mutableListOf<String>()
             var cur: Node? = node
@@ -1123,14 +1210,10 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             return segments
         }
 
-        // Reconstruct full surface string from backpointer chain
-        fun reconstructPath(node: Node): String = reconstructSegments(node).joinToString("")
-
-        // N-best Viterbi: keep top-K paths at each position
-        val K = 8
+        val K = 12
         val dp = Array(n + 1) { mutableListOf<Node>() }
-        // Use lastRightGroup from previous committed word for better BOS context
-        dp[0].add(Node(cost = 0, backPos = -1, surface = "", reading = "", segCount = 0, rightGroup = lastRightGroup, prevNode = null))
+        dp[0].add(Node(cost = 0, backPos = -1, surface = "", reading = "", segCount = 0,
+            rightGroup = lastRightGroup, prevNode = null, lmState = lmInitState, lmScore = 0f))
 
         for (endPos in 1..n) {
             val allCandidates = mutableListOf<Node>()
@@ -1144,40 +1227,46 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 if (entries != null && entries.isNotEmpty()) {
                     for (prevNode in dp[startPos]) {
                         val prevRG = prevNode.rightGroup
-                        val isAfterContentWord = prevRG in 1..3
-                        val isAfterFunctionWord = prevRG in 4..5
+                        val isAfterContentWord = isContentWord(prevRG)
+                        val isAfterFunctionWord = isFunctionWord(prevRG)
 
-                        for (entry in entries.take(8)) {
+                        val takeN = if (segLen >= 3) 15 else 8
+                        for (entry in entries.take(takeN)) {
                             var cost = applyBoost(segment, entry.surface, entry.cost)
                             val connCost = if (startPos == 0 && prevRG == 0) {
-                                // BOS: strongly favor 名詞(1), 副詞(6), 接続詞(8), 感動詞(9)
-                                // Penalize starting with 助詞(5), 助動詞(4)
-                                getConnectionCost(0, entry.leftGroup) + when (entry.leftGroup) {
-                                    1, 6, 8, 9 -> -500  // Natural sentence starters
-                                    4, 5 -> 1000          // Unnatural to start with particle
-                                    else -> 0
-                                }
+                                getConnectionCost(0, entry.leftGroup)
                             } else {
                                 getConnectionCost(prevRG, entry.leftGroup)
                             }
                             cost += connCost
 
-                            // Hiragana surface bonus: prefer leaving function words as kana
+                            // Hiragana surface bonus (reduced — full Mozc matrix handles most POS transitions)
                             if (entry.surface == segment) {
-                                // 助詞 after 名詞/動詞/形容詞 is extremely natural (e.g. 食べ+た, 学校+の)
-                                if (entry.leftGroup == 5 && segLen <= 2 && isAfterContentWord) cost -= 4000
-                                // 助動詞 after content word (e.g. 行き+ます)
-                                if (entry.leftGroup == 4 && segLen <= 3 && isAfterContentWord) cost -= 3500
-                                // Generic hiragana after content word
-                                if (segLen <= 3 && isAfterContentWord && entry.leftGroup !in 4..5) cost -= 2500
-                                // Function word after function word (e.g. で+は, に+も)
-                                if (segLen <= 2 && isAfterFunctionWord && entry.leftGroup in 4..5) cost -= 2000
-                                // General short hiragana after function word
-                                if (segLen <= 2 && isAfterFunctionWord && entry.leftGroup !in 4..5) cost -= 1000
+                                if (isParticle(entry.leftGroup) && segLen <= 2 && isAfterContentWord) cost -= 1500
+                                if (isAuxVerb(entry.leftGroup) && segLen <= 3 && isAfterContentWord) cost -= 1200
+                                if (segLen <= 3 && isAfterContentWord && !isFunctionWord(entry.leftGroup)) cost -= 800
+                                if (segLen <= 2 && isAfterFunctionWord && isFunctionWord(entry.leftGroup)) cost -= 600
+                                if (segLen <= 2 && isAfterFunctionWord && !isFunctionWord(entry.leftGroup)) cost -= 300
                             }
 
                             val lBonus = lengthBonus(segLen)
-                            val totalCost = prevNode.cost + cost + lBonus
+
+                            // KenLM incremental scoring within Viterbi
+                            var lmCost = 0
+                            var newLmState = prevNode.lmState
+                            var newLmScore = prevNode.lmScore
+                            if (lmAvailable && prevNode.lmState != null) {
+                                val lmResult = scorer!!.scoreWordIncremental(prevNode.lmState!!, entry.surface)
+                                if (lmResult != null) {
+                                    newLmScore = prevNode.lmScore + lmResult.first
+                                    newLmState = lmResult.second
+                                    // Convert LM score to cost: negative log prob * weight
+                                    // lmResult.first is log10(P(word|context)), typically -0.5 to -4.0
+                                    lmCost = (lmResult.first * -VITERBI_LM_WEIGHT).toInt()
+                                }
+                            }
+
+                            val totalCost = prevNode.cost + cost + lBonus + lmCost
 
                             allCandidates.add(Node(
                                 cost = totalCost,
@@ -1187,12 +1276,14 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                                 segCount = prevNode.segCount + 1,
                                 rightGroup = entry.rightGroup,
                                 prevNode = prevNode,
+                                lmState = newLmState,
+                                lmScore = newLmScore,
                             ))
                         }
                     }
                 } else if (segLen == 1) {
                     for (prevNode in dp[startPos]) {
-                        val connCost = if (startPos == 0) 0 else getConnectionCost(prevNode.rightGroup, 13)
+                        val connCost = if (startPos == 0) 0 else getConnectionCost(prevNode.rightGroup, 1)
                         val totalCost = prevNode.cost + 15000 + connCost
                         allCandidates.add(Node(
                             cost = totalCost,
@@ -1200,28 +1291,30 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                             surface = segment,
                             reading = segment,
                             segCount = prevNode.segCount + 1,
-                            rightGroup = 13,
+                            rightGroup = 1,
                             prevNode = prevNode,
+                            lmState = prevNode.lmState,
+                            lmScore = prevNode.lmScore,
                         ))
                     }
                 }
             }
 
-            // Keep top-K, ensuring path diversity
+            // Keep top-K with diversity
             val sorted = allCandidates.sortedBy { it.cost }
             val kept = mutableListOf<Node>()
-            val seenPaths = mutableSetOf<String>()
+            val seenHashes = mutableSetOf<Long>()
             for (node in sorted) {
-                val pathKey = reconstructPath(node)
-                if (seenPaths.add(pathKey)) {
+                val pathHash = (System.identityHashCode(node.prevNode).toLong() shl 32) xor
+                    node.surface.hashCode().toLong()
+                if (seenHashes.add(pathHash)) {
                     kept.add(node)
                 }
-                if (kept.size >= K * 2) break
+                if (kept.size >= K * 3) break
             }
             dp[endPos] = kept.toMutableList()
         }
 
-        // Collect results from all N-best paths at dp[n], applying EOS cost
         val results = mutableListOf<ConversionCandidate>()
         val seen = mutableSetOf<String>()
 
@@ -1229,26 +1322,21 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             val segments = reconstructSegments(node)
             val combined = segments.joinToString("")
             if (combined.isNotEmpty() && seen.add(combined)) {
-                // EOS transition cost: penalize unnatural sentence-ending POS
                 val eosCost = getConnectionCost(node.rightGroup, 0)
-                // Segment count penalty: discourage over-segmentation
                 val segPenalty = if (node.segCount >= 5) (node.segCount - 4) * 500 else 0
                 val finalCost = node.cost + eosCost / 2 + segPenalty
                 results.add(ConversionCandidate(surface = combined, reading = kana, cost = finalCost, segments = segments))
             }
-            if (results.size >= 10) break
+            if (results.size >= 15) break
         }
 
-        // Also add exact matches as alternatives
         val exactMatches = exactMatch(kana)
-
         if (results.isEmpty()) return exactMatches
 
         for (em in exactMatches) {
             if (seen.add(em.surface)) results.add(em)
         }
 
-        // Always include katakana and hiragana as-is
         val katakana = hiraganaToKatakana(kana)
         if (katakana != kana && seen.add(katakana)) {
             val maxCost = results.maxOfOrNull { it.cost } ?: 5000
@@ -1260,6 +1348,29 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         }
 
         return results.take(20)
+    }
+
+    /**
+     * Estimate appropriate cost for katakana conversion.
+     * If most dictionary entries for this reading have katakana surfaces (= loanword),
+     * rank katakana much higher.
+     */
+    private fun estimateKatakanaCost(kana: String, existingResults: List<ConversionCandidate>): Int {
+        val entries = dict[kana]
+        if (entries != null && entries.size >= 2) {
+            val katakanaCount = entries.count { surface ->
+                surface.surface.all { it in '\u30A0'..'\u30FF' || it == 'ー' }
+            }
+            val ratio = katakanaCount.toFloat() / entries.size
+            if (ratio >= 0.5f) {
+                // Loanword-heavy reading: katakana should rank near the top
+                val minCost = existingResults.minOfOrNull { it.cost } ?: 5000
+                return minCost + 200
+            }
+        }
+        // Default: katakana at the bottom
+        val maxCost = existingResults.maxOfOrNull { it.cost } ?: 5000
+        return maxCost + 500
     }
 
     /** Convert hiragana to katakana */

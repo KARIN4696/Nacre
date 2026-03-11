@@ -215,4 +215,128 @@ Java_space_manus_nacre_ai_KenLmJni_getOrder(JNIEnv*, jobject) {
 #endif
 }
 
+/**
+ * Get the size (in bytes) of a KenLM State for the current model.
+ * Returns 0 if no model is loaded.
+ */
+JNIEXPORT jint JNICALL
+Java_space_manus_nacre_ai_KenLmJni_getStateSize(JNIEnv*, jobject) {
+#ifdef KENLM_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_model) return 0;
+    return (jint)g_model->BaseStateSize();
+#else
+    return 0;
+#endif
+}
+
+/**
+ * Get the BOS (begin-of-sentence) state as a byte array.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_space_manus_nacre_ai_KenLmJni_getBeginState(JNIEnv* env, jobject) {
+#ifdef KENLM_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_model) return nullptr;
+
+    lm::ngram::State state;
+    g_model->BeginSentenceWrite(&state);
+
+    int size = (int)g_model->BaseStateSize();
+    jbyteArray result = env->NewByteArray(size);
+    env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(&state));
+    return result;
+#else
+    return nullptr;
+#endif
+}
+
+/**
+ * Score a single word given an input state, return score and new state.
+ * @param in_state byte[] of the input state
+ * @param word the word to score
+ * @return float[0]=log10 prob, followed by the output state bytes packed into
+ *         a byte[] (accessed via scoreWordResult / scoreWordState)
+ *
+ * Returns null if model not loaded.
+ * Result format: first 4 bytes = float (score), remaining bytes = output state
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_space_manus_nacre_ai_KenLmJni_scoreWord(JNIEnv* env, jobject, jbyteArray in_state, jstring word_str) {
+#ifdef KENLM_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_model) return nullptr;
+
+    int state_size = (int)g_model->BaseStateSize();
+
+    // Read input state
+    lm::ngram::State state;
+    env->GetByteArrayRegion(in_state, 0, state_size, reinterpret_cast<jbyte*>(&state));
+
+    // Score word
+    const char* word = env->GetStringUTFChars(word_str, nullptr);
+    lm::ngram::State out_state;
+    lm::FullScoreReturn ret = g_model->BaseFullScore(&state, g_model->BaseVocabulary().Index(word), &out_state);
+    env->ReleaseStringUTFChars(word_str, word);
+
+    // Pack result: 4 bytes float + state_size bytes
+    int result_size = 4 + state_size;
+    jbyteArray result = env->NewByteArray(result_size);
+    float score = ret.prob;
+    env->SetByteArrayRegion(result, 0, 4, reinterpret_cast<const jbyte*>(&score));
+    env->SetByteArrayRegion(result, 4, state_size, reinterpret_cast<const jbyte*>(&out_state));
+    return result;
+#else
+    return nullptr;
+#endif
+}
+
+/**
+ * Score multiple words in batch given their input states.
+ * More efficient: single lock, batch JNI calls.
+ * @param states flat byte[] of concatenated input states (each state_size bytes)
+ * @param words array of words
+ * @return flat byte[] of results: for each word, 4 bytes float + state_size bytes output state
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_space_manus_nacre_ai_KenLmJni_scoreWordBatch(JNIEnv* env, jobject, jbyteArray states, jobjectArray words) {
+#ifdef KENLM_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_model) return nullptr;
+
+    int state_size = (int)g_model->BaseStateSize();
+    int count = env->GetArrayLength(words);
+    int result_entry_size = 4 + state_size;
+
+    jbyteArray result = env->NewByteArray(count * result_entry_size);
+    std::vector<jbyte> state_buf(state_size);
+    std::vector<jbyte> result_buf(result_entry_size);
+
+    for (int i = 0; i < count; i++) {
+        // Read input state
+        env->GetByteArrayRegion(states, i * state_size, state_size, state_buf.data());
+        lm::ngram::State in_state;
+        memcpy(&in_state, state_buf.data(), state_size);
+
+        // Score word
+        jstring jword = (jstring)env->GetObjectArrayElement(words, i);
+        const char* word = env->GetStringUTFChars(jword, nullptr);
+        lm::ngram::State out_state;
+        lm::FullScoreReturn ret = g_model->BaseFullScore(&in_state, g_model->BaseVocabulary().Index(word), &out_state);
+        env->ReleaseStringUTFChars(jword, word);
+        env->DeleteLocalRef(jword);
+
+        // Pack result
+        float score = ret.prob;
+        memcpy(result_buf.data(), &score, 4);
+        memcpy(result_buf.data() + 4, &out_state, state_size);
+        env->SetByteArrayRegion(result, i * result_entry_size, result_entry_size, result_buf.data());
+    }
+
+    return result;
+#else
+    return nullptr;
+#endif
+}
+
 } // extern "C"

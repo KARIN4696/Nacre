@@ -58,12 +58,45 @@ class KenLmScorer {
     fun unload() {
         KenLmJni.unloadModel()
         modelLoaded = false
+        stateSize = 0
+    }
+
+    // --- Incremental scoring for Viterbi integration ---
+
+    private var stateSize: Int = 0
+
+    /** Get state size, caching the result. */
+    fun getStateSize(): Int {
+        if (stateSize == 0 && isReady()) {
+            stateSize = KenLmJni.getStateSize()
+        }
+        return stateSize
+    }
+
+    /** Get begin-of-sentence state. Returns null if not ready. */
+    fun getBeginState(): ByteArray? {
+        if (!isReady()) return null
+        return KenLmJni.getBeginState()
+    }
+
+    /**
+     * Score a single word incrementally.
+     * @return Pair(log10 probability, output state bytes) or null
+     */
+    fun scoreWordIncremental(inState: ByteArray, word: String): Pair<Float, ByteArray>? {
+        if (!isReady()) return null
+        val result = KenLmJni.scoreWord(inState, word) ?: return null
+        val sz = getStateSize()
+        if (result.size < 4 + sz) return null
+        val score = java.nio.ByteBuffer.wrap(result, 0, 4)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN).float
+        val outState = result.copyOfRange(4, 4 + sz)
+        return Pair(score, outState)
     }
 
     private fun buildSentence(segments: List<String>, precedingContext: String): String {
         return buildString {
             if (precedingContext.isNotEmpty()) {
-                // Use last ~20 chars of preceding context as additional words
                 append(precedingContext.takeLast(20))
                 append(" ")
             }

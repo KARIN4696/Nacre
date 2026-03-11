@@ -135,10 +135,10 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
                     // Request confidence scores
                     putExtra(RecognizerIntent.EXTRA_CONFIDENCE_SCORES, true)
-                    // Longer silence detection for continuous dictation
-                    putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 15000L)
-                    putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500L)
-                    putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 1800L)
+                    // Typeless-level continuous dictation: very long silence tolerance
+                    putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 60000L)
+                    putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 10000L)
+                    putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 8000L)
                 }
 
                 recognizer.startListening(intent)
@@ -321,7 +321,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                         isListening = false
                         continuousMode = false
                     }
-                }, if (error == SpeechRecognizer.ERROR_NO_MATCH) 100L else 500L)
+                }, if (error in setOf(SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) 50L else 300L)
             } else {
                 isListening = false
                 continuousMode = false

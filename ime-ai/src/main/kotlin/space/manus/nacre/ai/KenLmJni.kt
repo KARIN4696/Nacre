@@ -55,4 +55,28 @@ object KenLmJni {
 
     /** Get the N-gram order of the loaded model (e.g. 5 for 5-gram). */
     external fun getOrder(): Int
+
+    // --- Incremental scoring API for Viterbi integration ---
+
+    /** Get the byte size of a KenLM State. */
+    external fun getStateSize(): Int
+
+    /** Get the BOS (begin-of-sentence) state as byte array. */
+    external fun getBeginState(): ByteArray?
+
+    /**
+     * Score a single word incrementally.
+     * @param inState input state bytes
+     * @param word the word to score
+     * @return packed bytes: first 4 bytes = float (log10 prob), remaining = output state
+     */
+    external fun scoreWord(inState: ByteArray, word: String): ByteArray?
+
+    /**
+     * Score multiple words in batch (single lock acquisition).
+     * @param states flat byte array of concatenated input states
+     * @param words array of words to score
+     * @return flat byte array: for each word, 4 bytes float + stateSize bytes output state
+     */
+    external fun scoreWordBatch(states: ByteArray, words: Array<String>): ByteArray?
 }
