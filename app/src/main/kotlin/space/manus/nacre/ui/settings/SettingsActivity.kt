@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import space.manus.nacre.ai.KenLmJni
 import space.manus.nacre.config.ConfigRepository
 import space.manus.nacre.config.PresetProvider
 import space.manus.nacre.config.ThemeProvider
@@ -712,6 +713,16 @@ private fun KenLmModelSection() {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text("Import a .klm model file for better Japanese conversion", color = NacreTextDim, fontSize = 12.sp)
             }
+            // Debug status
+            Spacer(modifier = Modifier.height(8.dp))
+            val nativeOk = KenLmJni.isAvailable()
+            val modelLoaded = try { KenLmJni.isModelLoaded() } catch (_: Exception) { false }
+            val order = try { if (modelLoaded) KenLmJni.getOrder() else 0 } catch (_: Exception) { 0 }
+            Text(
+                text = "Native: ${if (nativeOk) "✓" else "✗"}  Model: ${if (modelLoaded) "✓ (${order}-gram)" else "✗"}",
+                color = if (nativeOk && modelLoaded) NacreAccent.copy(alpha = 0.7f) else Color(0xFFFF6666),
+                fontSize = 11.sp,
+            )
             Spacer(modifier = Modifier.height(12.dp))
             Button(
                 onClick = { launcher.launch(arrayOf("*/*")) },
