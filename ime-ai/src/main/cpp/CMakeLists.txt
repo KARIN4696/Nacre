@@ -86,6 +86,7 @@ if(EXISTS ${KENLM_DIR}/lm/model.cc)
         KENLM_MAX_ORDER=5
         HAVE_POSIX_MEMALIGN
         NDEBUG
+        _LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION
     )
     # Suppress some warnings in KenLM code
     target_compile_options(kenlm PRIVATE -Wno-unused-parameter -Wno-sign-compare)
