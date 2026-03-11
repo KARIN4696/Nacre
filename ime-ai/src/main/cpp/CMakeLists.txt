@@ -82,11 +82,13 @@ if(EXISTS ${KENLM_DIR}/lm/model.cc)
         ${KENLM_DCONV_SRCS}
     )
     target_include_directories(kenlm PUBLIC ${KENLM_DIR})
-    target_compile_definitions(kenlm PRIVATE
+    target_compile_definitions(kenlm PUBLIC
         KENLM_MAX_ORDER=5
+        _LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION
+    )
+    target_compile_definitions(kenlm PRIVATE
         HAVE_POSIX_MEMALIGN
         NDEBUG
-        _LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION
     )
     # Suppress some warnings in KenLM code
     target_compile_options(kenlm PRIVATE -Wno-unused-parameter -Wno-sign-compare)
