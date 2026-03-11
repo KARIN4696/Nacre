@@ -24,16 +24,19 @@ android {
         jvmTarget = "17"
     }
 
-    // NDK/CMake for native JNI (whisper.cpp/llama.cpp)
-    // Requires NDK with aarch64 host toolchain.
-    // Uncomment when building on x86-64 host or CI:
-    // ndkVersion = "27.0.12077973"
-    // externalNativeBuild {
-    //     cmake {
-    //         path = file("src/main/cpp/CMakeLists.txt")
-    //         version = "3.22.1"
-    //     }
-    // }
+    // NDK/CMake for native JNI — enabled on CI (x86-64 host), disabled on Termux (ARM host)
+    // Termux cannot run NDK's x86-64 cmake/ninja binaries.
+    // To enable locally: set ENABLE_NDK=true environment variable
+    if (System.getenv("ENABLE_NDK") == "true" ||
+        System.getenv("CI") == "true") {
+        ndkVersion = "27.0.12077973"
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
+        }
+    }
 }
 
 dependencies {

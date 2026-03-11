@@ -42,10 +42,14 @@ jobs:
         run: sed -i '/android.aapt2FromMavenOverride/d' gradle.properties
 
       - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug -PenableNdk=true
+        run: ./gradlew :app:assembleDebug
+        env:
+          ENABLE_NDK: "true"
 
       - name: Build Release APK
-        run: ./gradlew :app:assembleRelease -PenableNdk=true
+        run: ./gradlew :app:assembleRelease
+        env:
+          ENABLE_NDK: "true"
 
       - name: Verify native library included
         run: |
