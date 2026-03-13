@@ -88,8 +88,9 @@ object DefaultLayouts {
             ),
             listOf(
                 key("!"), key("@"), key("#"), key("$"), key("%"),
-                key("^"), key("&"), key("*"), key("("),
-                key(")", swipeUp = "_"),
+                key("^"), key("&"), key("*"),
+                key("(", swipeUp = "[", swipeLeft = "{"),
+                key(")", swipeUp = "]", swipeRight = "}"),
             ),
             listOf(
                 KeyDef("C-c", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_C, ctrl = true)),

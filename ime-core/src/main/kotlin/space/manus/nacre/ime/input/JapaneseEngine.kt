@@ -32,14 +32,11 @@ class JapaneseEngine {
                     continue
                 }
                 // nn → ん (double-n convention)
+                // Always consume both n's: "nni" → ん+い, "nna" → ん+あ
+                // To type んな, use n'na or nna will give んあ
                 if (i + 1 < lower.length && lower[i + 1] == 'n') {
                     result.append("ん")
-                    val afterNN = i + 2
-                    if (afterNN < lower.length && lower[afterNN] in VOWELS_AND_Y) {
-                        i += 1  // keep second n for next kana (e.g. nno → ん+の)
-                    } else {
-                        i += 2  // consume both (e.g. nn at end, or nnk...)
-                    }
+                    i += 2  // consume both n's
                     continue
                 }
                 // n + consonant (not n, not vowel, not y) → ん + keep consonant
@@ -61,10 +58,16 @@ class JapaneseEngine {
                 if (i + 1 < lower.length && lower[i + 1] == 'y') {
                     // Look ahead: is there a vowel after 'y'?
                     if (i + 2 < lower.length && lower[i + 2] in VOWELS) {
-                        // We have ny+vowel. If i > 0, the previous character was part
-                        // of a completed kana → this 'n' is standalone → ん + y-row
-                        // If i == 0, this is word-initial 'ny' → にゃ etc.
-                        if (i > 0) {
+                        // We have ny+vowel. Disambiguation:
+                        // - Word-initial (i==0): always にゃ etc. (table match)
+                        // - After a vowel or ん: this 'n' starts a new syllable → ん + y-row
+                        //   e.g. "konnya" → こん+にゃ NOT こん+ん+や (handled by nn rule above)
+                        //   BUT "kannya" → かん+にゃ — nn already consumed → this 'n' is にゃ start
+                        // - After a consonant: ambiguous, but safer to treat as nya table match
+                        // Key: only emit ん if the character BEFORE this 'n' was a vowel
+                        // (meaning a kana was just completed and this n is a new syllable)
+                        val prevIsVowel = i > 0 && lower[i - 1] in VOWELS
+                        if (prevIsVowel) {
                             result.append("ん")
                             i += 1  // leave 'y'+vowel for table match → や/ゆ/よ
                             continue

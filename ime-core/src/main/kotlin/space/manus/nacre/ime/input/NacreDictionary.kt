@@ -27,8 +27,8 @@ import space.manus.nacre.ai.KenLmScorer
  */
 class NacreDictionary(private val context: Context) : DictionaryProvider {
 
-    // reading → list of entries with POS info
-    private val dict = HashMap<String, MutableList<DictEntry>>(3000000)
+    // reading → list of entries with POS info (initial capacity smaller to avoid OOM on allocation)
+    private val dict = HashMap<String, MutableList<DictEntry>>(400000)
 
     // Sorted readings for prefix search
     private var sortedReadings: Array<String> = emptyArray()
@@ -98,6 +98,14 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         loadSlangDictionary()
         loadSupplementaryDict("dict/emoji_kaomoji.tsv", "emoji/kaomoji")
         loadSupplementaryDict("dict/symbols.tsv", "symbols")
+
+        // Sort all entries and build index ONCE after all dicts loaded (avoids OOM from repeated sorts)
+        for (entries in dict.values) {
+            entries.sortBy { it.cost }
+        }
+        sortedReadings = dict.keys.toTypedArray().also { it.sort() }
+        Log.i("NacreDictionary", "Index built: ${dict.size} readings, ${sortedReadings.size} sorted")
+
         loadEnglishDict()
         buildRomajiEnglishIndex()
         loadEnglishFullDict()
@@ -109,15 +117,27 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     private fun loadConnectionMatrix() {
         try {
             context.assets.open("dict/connection.bin").use { stream ->
-                val bytes = stream.readBytes()
-                val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-                numIds = buf.int  // First 4 bytes: uint32 num_ids
+                val dis = java.io.DataInputStream(java.io.BufferedInputStream(stream, 65536))
+                // First 4 bytes: uint32 num_ids (little-endian)
+                val b = ByteArray(4)
+                dis.readFully(b)
+                numIds = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).int
                 val total = numIds * numIds
                 connectionCostFlat = ShortArray(total)
-                for (i in 0 until total) {
-                    connectionCostFlat[i] = buf.short
+                // Read int16 values in 8KB chunks to avoid 14MB byte[] allocation
+                val chunkBytes = ByteArray(8192)
+                var idx = 0
+                while (idx < total) {
+                    val remaining = (total - idx) * 2
+                    val toRead = minOf(chunkBytes.size, remaining)
+                    dis.readFully(chunkBytes, 0, toRead)
+                    val chunk = ByteBuffer.wrap(chunkBytes, 0, toRead).order(ByteOrder.LITTLE_ENDIAN)
+                    val count = toRead / 2
+                    for (j in 0 until count) {
+                        connectionCostFlat[idx++] = chunk.short
+                    }
                 }
-                Log.i("NacreDictionary", "Connection matrix loaded: ${numIds}x${numIds} (${bytes.size / 1024}KB)")
+                Log.i("NacreDictionary", "Connection matrix loaded: ${numIds}x${numIds} (${total * 2 / 1024}KB)")
             }
         } catch (e: Exception) {
             Log.e("NacreDictionary", "Failed to load binary connection matrix, trying TSV fallback", e)
@@ -201,12 +221,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             Log.e("NacreDictionary", "Failed to load dictionary", e)
         }
 
-        // Sort entries by cost within each reading
-        for (entries in dict.values) {
-            entries.sortBy { it.cost }
-        }
-
-        sortedReadings = dict.keys.toTypedArray().also { it.sort() }
+        // Sorting deferred to load() after all dicts are loaded
     }
 
     private fun loadSlangDictionary() {
@@ -234,12 +249,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                     Log.i("NacreDictionary", "Slang dict loaded: $count new entries")
                 }
             }
-            // Re-sort affected entries
-            for (entries in dict.values) {
-                entries.sortBy { it.cost }
-            }
-            // Rebuild sorted readings
-            sortedReadings = dict.keys.toTypedArray().also { it.sort() }
+            // Sorting deferred to load()
         } catch (e: Exception) {
             Log.i("NacreDictionary", "No slang dictionary found (optional)")
         }
@@ -292,11 +302,11 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
-        // 1. Viterbi multi-word conversion (best segmentation)
-        addUnique(viterbiConvert(kana))
-
-        // 2. Exact match (single-word candidates)
+        // 1. Exact match FIRST (single-word candidates — these should rank highest)
         addUnique(exactMatch(kana))
+
+        // 2. Viterbi multi-word conversion (best segmentation)
+        addUnique(viterbiConvert(kana))
 
         // 3. Partial segmentation for diversity (with POS connection cost)
         if (results.size < 12 && kana.length >= 3) {
@@ -329,8 +339,8 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
-        // 4. 3-way segmentation for longer inputs — consider top 3 entries per segment
-        if (results.size < 15 && kana.length >= 6) {
+        // 4. 3-way segmentation for medium inputs — skip for long text (Viterbi handles it)
+        if (results.size < 15 && kana.length in 6..14) {
             outer@ for (s1 in 2..(kana.length - 4)) {
                 val seg1 = kana.substring(0, s1)
                 val entries1 = dict[seg1]?.take(3) ?: continue
@@ -377,7 +387,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
         kenLmRescore(boosted)
 
-        return boosted.sortedBy { it.cost }.take(20)
+        return boosted.sortedBy { it.cost }.take(if (kana.length <= 3) 40 else 30)
     }
 
     override fun predict(kana: String, romaji: String): List<ConversionCandidate> {
@@ -406,11 +416,11 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         }.take(3)
         addUnique(historyMatches)
 
-        // 1. Viterbi multi-word conversion
-        addUnique(viterbiConvert(kana).take(8))
-
-        // 2. Exact match
+        // 1. Exact match FIRST (single-word candidates rank highest)
         addUnique(exactMatch(kana))
+
+        // 2. Viterbi multi-word conversion
+        addUnique(viterbiConvert(kana).take(8))
 
         // 3. Prefix match
         if (results.size < 15) {
@@ -490,7 +500,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
         kenLmRescore(boosted)
 
-        return boosted.sortedBy { it.cost }.take(20)
+        return boosted.sortedBy { it.cost }.take(if (kana.length <= 3) 40 else 25)
     }
 
     override fun recordSelection(candidate: ConversionCandidate) {
@@ -669,7 +679,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         val scorer = kenLmScorer ?: return
         if (!scorer.isReady() || candidates.isEmpty()) return
         if (candidates.size <= 2) return
-        val maxScore = 30.coerceAtMost(candidates.size)
+        val maxScore = 40.coerceAtMost(candidates.size)
 
         // Use up to 4 words of context for KenLM 5-gram
         val precedingContext = committedContext.reversed().joinToString(" ")
@@ -694,9 +704,18 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
     private fun exactMatch(kana: String): List<ConversionCandidate> {
         val entries = dict[kana] ?: return emptyList()
+        // Exact match bonus: single-word results should beat multi-word Viterbi splits
+        // Longer exact matches get bigger bonus (e.g. こんにちは should beat 今日+葉)
+        val exactBonus = when {
+            kana.length >= 7 -> -5000
+            kana.length >= 5 -> -4000
+            kana.length >= 4 -> -3000
+            kana.length >= 3 -> -1500
+            else -> -800
+        }
         return entries
             .map { entry ->
-                var cost = applyBoost(kana, entry.surface, entry.cost)
+                var cost = applyBoost(kana, entry.surface, entry.cost) + exactBonus
                 cost = posContextCost(kana, entry.surface, cost)
                 // Suppress function words (助詞・助動詞) appearing as sole candidates for 2+ char input
                 if (kana.length >= 2 && isFunctionWord(entry.leftGroup) && entry.surface.length <= 1) {
@@ -706,10 +725,11 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                     surface = entry.surface,
                     reading = kana,
                     cost = cost,
+                    segments = listOf(entry.surface),
                 )
             }
             .sortedBy { it.cost }
-            .take(20)
+            .take(if (kana.length <= 3) 40 else 20)  // Short readings: show all kanji candidates
     }
 
     private fun prefixMatch(kana: String, limit: Int): List<ConversionCandidate> {
@@ -1210,14 +1230,14 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             return segments
         }
 
-        val K = 12
+        val K = if (n <= 8) 15 else 12  // Wider beam for better conversion accuracy
         val dp = Array(n + 1) { mutableListOf<Node>() }
         dp[0].add(Node(cost = 0, backPos = -1, surface = "", reading = "", segCount = 0,
             rightGroup = lastRightGroup, prevNode = null, lmState = lmInitState, lmScore = 0f))
 
         for (endPos in 1..n) {
             val allCandidates = mutableListOf<Node>()
-            val maxSegLen = minOf(endPos, 16)
+            val maxSegLen = minOf(endPos, if (n <= 10) 10 else 8)
 
             for (segLen in 1..maxSegLen) {
                 val startPos = endPos - segLen
@@ -1230,7 +1250,9 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                         val isAfterContentWord = isContentWord(prevRG)
                         val isAfterFunctionWord = isFunctionWord(prevRG)
 
-                        val takeN = if (segLen >= 3) 15 else 8
+                        // Limit candidates per segment: fewer for long inputs
+                        val takeN = if (n > 12) minOf(if (segLen >= 3) 12 else 8, entries.size)
+                                    else if (segLen >= 3) 16 else 10
                         for (entry in entries.take(takeN)) {
                             var cost = applyBoost(segment, entry.surface, entry.cost)
                             val connCost = if (startPos == 0 && prevRG == 0) {
@@ -1300,19 +1322,21 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 }
             }
 
-            // Keep top-K with diversity
-            val sorted = allCandidates.sortedBy { it.cost }
+            // Keep top-K with diversity — use partial sort for performance
+            if (allCandidates.size > K * 2) {
+                allCandidates.sortBy { it.cost }
+            }
             val kept = mutableListOf<Node>()
             val seenHashes = mutableSetOf<Long>()
-            for (node in sorted) {
+            for (node in allCandidates) {
                 val pathHash = (System.identityHashCode(node.prevNode).toLong() shl 32) xor
                     node.surface.hashCode().toLong()
                 if (seenHashes.add(pathHash)) {
                     kept.add(node)
                 }
-                if (kept.size >= K * 3) break
+                if (kept.size >= K * 2) break
             }
-            dp[endPos] = kept.toMutableList()
+            dp[endPos] = kept
         }
 
         val results = mutableListOf<ConversionCandidate>()
@@ -1327,7 +1351,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 val finalCost = node.cost + eosCost / 2 + segPenalty
                 results.add(ConversionCandidate(surface = combined, reading = kana, cost = finalCost, segments = segments))
             }
-            if (results.size >= 15) break
+            if (results.size >= 25) break
         }
 
         val exactMatches = exactMatch(kana)
@@ -1347,7 +1371,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             results.add(ConversionCandidate(surface = kana, reading = kana, cost = maxCost + 200))
         }
 
-        return results.take(20)
+        return results.take(25)
     }
 
     /**

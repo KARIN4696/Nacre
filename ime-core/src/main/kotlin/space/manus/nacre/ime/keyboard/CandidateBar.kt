@@ -46,7 +46,7 @@ fun CandidateBar(
 
     // SPEC: hide candidate bar in password fields
     if (service.inputEngine.isPasswordField) {
-        Spacer(modifier = modifier.fillMaxWidth().height(28.dp).background(barBg))
+        Spacer(modifier = modifier.fillMaxWidth().height(36.dp).background(barBg))
         return
     }
 
@@ -60,7 +60,7 @@ fun CandidateBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(28.dp)
+            .height(36.dp)
             .background(barBg)
             .then(
                 if (isConverting) {
@@ -175,11 +175,11 @@ private fun CandidateChip(
 
     Box(
         modifier = Modifier
-            .height(28.dp)
-            .clip(RoundedCornerShape(4.dp))
+            .height(32.dp)
+            .clip(RoundedCornerShape(6.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 2.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
             .semantics {
                 contentDescription = "候補${index + 1}: ${candidate.surface}"
             },
