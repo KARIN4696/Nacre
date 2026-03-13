@@ -20,3 +20,7 @@ tools/mozc_raw/
 ime-ai/src/main/cpp/kenlm/
 # KenLM cloned source
 /kenlm-src/
+# Signing keys — NEVER commit
+*.keystore
+*.jks
+signing.properties

@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 
 /**
@@ -52,10 +53,33 @@ class LlmReranker(private val context: Context) {
         private set
 
     /**
+     * SECURITY: Validate that a URL points to localhost only.
+     *
+     * IME apps have access to every keystroke the user types. To prevent
+     * exfiltration of keystrokes to arbitrary external servers (whether by
+     * misconfiguration or a malicious SharedPreferences write), we restrict
+     * the LLM reranker to only connect to loopback addresses.
+     */
+    private fun isLocalhostUrl(url: String): Boolean {
+        return try {
+            val host = URI(url).host?.lowercase() ?: return false
+            host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Check if the LLM server is reachable. Called once on IME startup.
      */
     fun checkServer() {
         scope.launch {
+            // SECURITY: refuse to connect to non-localhost URLs
+            if (!isLocalhostUrl(baseUrl)) {
+                Log.w(TAG, "LLM server URL rejected: not localhost (url=$baseUrl)")
+                serverAvailable = false
+                return@launch
+            }
             serverAvailable = try {
                 val apiType = detectApiType(baseUrl)
                 val checkUrl = if (apiType == "ollama") "$baseUrl/api/tags" else "$baseUrl/health"
@@ -91,6 +115,8 @@ class LlmReranker(private val context: Context) {
     ) {
         if (!enabled || !serverAvailable) return
         if (candidates.size <= 1) return
+        // SECURITY: double-check localhost restriction before every request
+        if (!isLocalhostUrl(baseUrl)) return
 
         // Cancel previous rerank if still running
         lastRerankJob?.cancel()

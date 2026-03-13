@@ -15,7 +15,6 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.util.Log
 import space.manus.nacre.config.KeyAction
 import space.manus.nacre.config.KeyDef
 import space.manus.nacre.ime.NacreInputMethodService
@@ -75,7 +74,7 @@ class InputEngine(private val service: NacreInputMethodService) {
     fun refreshPredictionsIfNeeded() {
         if (composingText.isNotEmpty() && !isConverting) {
             val kana = japaneseEngine.romajiToHiragana(composingText)
-            Log.d("InputEngine", "refreshPredictionsIfNeeded: kana=$kana")
+            // Log.d removed: never log user input text (kana) even in debug
             updatePredictions(kana)
         }
     }
@@ -737,6 +736,8 @@ class InputEngine(private val service: NacreInputMethodService) {
     }
 
     private fun clearCandidates() {
+        predictionJob?.cancel()
+        predictionJob = null
         candidates.clear()
         selectedCandidateIndex = -1
         isConverting = false
@@ -777,21 +778,26 @@ class InputEngine(private val service: NacreInputMethodService) {
     private fun removeLastKanaUnit(romaji: String): String {
         if (romaji.isEmpty()) return ""
 
-        val currentKana = japaneseEngine.romajiToHiragana(romaji)
+        // Single character — always clear entirely
+        if (romaji.length == 1) return ""
 
-        // Try removing 1, 2, 3, 4 chars from the end — find the shortest removal
+        val currentKana = japaneseEngine.romajiToHiragana(romaji, finalize = true)
+
+        // If the romaji produces no kana (all unconverted), clear entirely
+        if (currentKana == romaji) return ""
+
+        // Try removing 1..N chars from the end — find the shortest removal
         // that actually changes the kana output (i.e., removes one kana unit)
-        for (drop in 1..minOf(4, romaji.length)) {
+        for (drop in 1..romaji.length) {
             val shortened = romaji.dropLast(drop)
-            val shortenedKana = japaneseEngine.romajiToHiragana(shortened)
-            // Check if we removed exactly one kana (or trailing unconverted chars)
+            val shortenedKana = japaneseEngine.romajiToHiragana(shortened, finalize = true)
             if (shortenedKana.length < currentKana.length) {
                 return shortened
             }
         }
 
-        // Fallback: drop 1 char
-        return romaji.dropLast(1)
+        // Fallback: clear entirely (should not reach here)
+        return ""
     }
 
     private fun commitText(text: String) {

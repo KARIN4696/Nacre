@@ -138,7 +138,7 @@ class LlmService : Service() {
      */
     private fun llmTransform(text: String, instruction: String): String {
         val prompt = buildPrompt(text, instruction)
-        Log.d(TAG, "LLM prompt: ${prompt.take(100)}...")
+        // Log.d removed: never log LLM prompts (contain user text)
         val result = LlamaJni.generate(prompt, MAX_TOKENS)
         return result.trim()
     }

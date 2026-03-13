@@ -23,7 +23,67 @@ class JapaneseEngine {
         val lower = input.lowercase()
 
         while (i < lower.length) {
-            // Try 4-char match first, then 3, 2, 1 (supports xtsu/ltsu etc.)
+            // ── 'n' special handling (MUST be checked before table match) ──
+            if (lower[i] == 'n') {
+                // n' → ん (forced apostrophe escape)
+                if (i + 1 < lower.length && lower[i + 1] == '\'') {
+                    result.append("ん")
+                    i += 2
+                    continue
+                }
+                // nn → ん (double-n convention)
+                if (i + 1 < lower.length && lower[i + 1] == 'n') {
+                    result.append("ん")
+                    val afterNN = i + 2
+                    if (afterNN < lower.length && lower[afterNN] in VOWELS_AND_Y) {
+                        i += 1  // keep second n for next kana (e.g. nno → ん+の)
+                    } else {
+                        i += 2  // consume both (e.g. nn at end, or nnk...)
+                    }
+                    continue
+                }
+                // n + consonant (not n, not vowel, not y) → ん + keep consonant
+                // e.g. nk→んk, nb→んb, etc.
+                if (i + 1 < lower.length && lower[i + 1] !in VOWELS_AND_Y) {
+                    result.append("ん")
+                    i += 1
+                    continue
+                }
+                // n + y → check if this is truly a ny-row kana (nya/nyu/nyo etc.)
+                // or if it should be ん + y-row kana.
+                // Key insight: if there was a preceding kana just consumed (i.e. i > 0
+                // and the previous char was consumed as part of a kana), then this 'n'
+                // starts a new syllable. We need to check if "ny*" forms a valid
+                // table entry. If it does, it could be either にゃ or ん+や.
+                // Disambiguation: if the 'n' is preceded by a vowel that completed a
+                // kana (meaning the previous romaji chunk ended), treat as ん + y-row.
+                // In practice: check if removing 'n' leaves a valid next syllable via y-row.
+                if (i + 1 < lower.length && lower[i + 1] == 'y') {
+                    // Look ahead: is there a vowel after 'y'?
+                    if (i + 2 < lower.length && lower[i + 2] in VOWELS) {
+                        // We have ny+vowel. If i > 0, the previous character was part
+                        // of a completed kana → this 'n' is standalone → ん + y-row
+                        // If i == 0, this is word-initial 'ny' → にゃ etc.
+                        if (i > 0) {
+                            result.append("ん")
+                            i += 1  // leave 'y'+vowel for table match → や/ゆ/よ
+                            continue
+                        }
+                        // else: fall through to table match for nya/nyu/nyo
+                    }
+                    // ny without following vowel: n is pending, fall through
+                }
+                // n + vowel → fall through to table match (na/ni/nu/ne/no)
+                // trailing n: convert only if finalizing
+                if (i + 1 >= lower.length && finalize) {
+                    result.append("ん")
+                    i += 1
+                    continue
+                }
+                // Fall through to table match for na/ni/nu/ne/no/nya(word-initial)/etc.
+            }
+
+            // ── Table match: try 4-char, 3-char, 2-char, 1-char ──
             val matched = tryMatch(lower, i, 4)
                 ?: tryMatch(lower, i, 3)
                 ?: tryMatch(lower, i, 2)
@@ -33,38 +93,12 @@ class JapaneseEngine {
                 result.append(matched.kana)
                 i += matched.consumed
             } else {
-                // Handle n' → ん (forced)
-                if (lower[i] == 'n' && i + 1 < lower.length && lower[i + 1] == '\'') {
-                    result.append("ん")
-                    i += 2
-                }
-                // Handle "nn" → ん
-                // If followed by vowel/y (e.g. "nno"→ん+の), consume only first n
-                // If nn is at end or followed by consonant, consume both
-                else if (i + 1 < lower.length && lower[i] == 'n' && lower[i + 1] == 'n') {
-                    result.append("ん")
-                    val afterNN = i + 2
-                    if (afterNN < lower.length && lower[afterNN] in VOWELS_AND_Y) {
-                        i += 1  // keep second n for next kana (e.g. nno → ん+の)
-                    } else {
-                        i += 2  // consume both (e.g. nn at end, or nnk...)
-                    }
-                }
                 // Handle double consonant (kk, ss, tt, etc.) → っ
-                else if (i + 1 < lower.length && lower[i] == lower[i + 1] &&
+                if (i + 1 < lower.length && lower[i] == lower[i + 1] &&
                     lower[i] in DOUBLE_CONSONANTS
                 ) {
                     result.append("っ")
                     i += 1 // consume only the first consonant
-                }
-                // Standalone 'n' before non-vowel → ん
-                // At end of string: only convert if finalizing (committing)
-                else if (lower[i] == 'n' && (
-                    (i + 1 < lower.length && lower[i + 1] !in VOWELS_AND_Y) ||
-                    (i + 1 >= lower.length && finalize)
-                )) {
-                    result.append("ん")
-                    i += 1
                 }
                 // Unknown char — keep as-is (pending romaji or punctuation)
                 else {
@@ -87,6 +121,7 @@ class JapaneseEngine {
     private data class MatchResult(val kana: String, val consumed: Int)
 
     companion object {
+        private val VOWELS = setOf('a', 'i', 'u', 'e', 'o')
         private val VOWELS_AND_Y = setOf('a', 'i', 'u', 'e', 'o', 'y')
         private val DOUBLE_CONSONANTS = setOf('k', 's', 't', 'p', 'c', 'g', 'z', 'd', 'b', 'j', 'f', 'h', 'r', 'w', 'm')
 
