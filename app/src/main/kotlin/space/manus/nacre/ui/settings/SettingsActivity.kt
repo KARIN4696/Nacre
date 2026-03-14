@@ -716,8 +716,8 @@ private fun KenLmModelSection() {
             // Debug status
             Spacer(modifier = Modifier.height(8.dp))
             val nativeOk = KenLmJni.isAvailable()
-            val modelLoaded = try { KenLmJni.isModelLoaded() } catch (_: Exception) { false }
-            val order = try { if (modelLoaded) KenLmJni.getOrder() else 0 } catch (_: Exception) { 0 }
+            val modelLoaded = try { if (nativeOk) KenLmJni.isModelLoaded() else false } catch (_: Throwable) { false }
+            val order = try { if (nativeOk && modelLoaded) KenLmJni.getOrder() else 0 } catch (_: Throwable) { 0 }
             Text(
                 text = "Native: ${if (nativeOk) "✓" else "✗"}  Model: ${if (modelLoaded) "✓ (${order}-gram)" else "✗"}",
                 color = if (nativeOk && modelLoaded) NacreAccent.copy(alpha = 0.7f) else Color(0xFFFF6666),

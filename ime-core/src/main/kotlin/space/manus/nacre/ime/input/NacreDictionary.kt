@@ -707,11 +707,12 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         // Exact match bonus: single-word results should beat multi-word Viterbi splits
         // Longer exact matches get bigger bonus (e.g. こんにちは should beat 今日+葉)
         val exactBonus = when {
-            kana.length >= 7 -> -5000
-            kana.length >= 5 -> -4000
-            kana.length >= 4 -> -3000
-            kana.length >= 3 -> -1500
-            else -> -800
+            kana.length >= 8 -> -7000
+            kana.length >= 7 -> -6000
+            kana.length >= 5 -> -5000
+            kana.length >= 4 -> -3500
+            kana.length >= 3 -> -2000
+            else -> -1000
         }
         return entries
             .map { entry ->
@@ -1175,15 +1176,18 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     }
 
     private fun lengthBonus(segLen: Int): Int {
+        // Strongly prefer longer segments — key for matching Google IME quality.
+        // Longer segments = fewer word boundaries = less ambiguity.
         return when {
-            segLen >= 8 -> -2000
-            segLen >= 7 -> -1600
-            segLen >= 6 -> -1200
-            segLen >= 5 -> -800
-            segLen >= 4 -> -500
-            segLen >= 3 -> -200
+            segLen >= 10 -> -4000
+            segLen >= 8 -> -3200
+            segLen >= 7 -> -2600
+            segLen >= 6 -> -2000
+            segLen >= 5 -> -1500
+            segLen >= 4 -> -1000
+            segLen >= 3 -> -400
             segLen == 2 -> 0
-            else -> 800  // Single-char segments heavily penalized (particles handled by connection cost)
+            else -> 1200  // Single-char segments heavily penalized (particles handled by connection cost)
         }
     }
 
@@ -1230,14 +1234,14 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             return segments
         }
 
-        val K = if (n <= 8) 15 else 12  // Wider beam for better conversion accuracy
+        val K = if (n <= 6) 20 else if (n <= 10) 18 else 15  // Wide beam for accuracy
         val dp = Array(n + 1) { mutableListOf<Node>() }
         dp[0].add(Node(cost = 0, backPos = -1, surface = "", reading = "", segCount = 0,
             rightGroup = lastRightGroup, prevNode = null, lmState = lmInitState, lmScore = 0f))
 
         for (endPos in 1..n) {
             val allCandidates = mutableListOf<Node>()
-            val maxSegLen = minOf(endPos, if (n <= 10) 10 else 8)
+            val maxSegLen = minOf(endPos, if (n <= 10) 12 else 10)
 
             for (segLen in 1..maxSegLen) {
                 val startPos = endPos - segLen
@@ -1323,9 +1327,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
 
             // Keep top-K with diversity — use partial sort for performance
-            if (allCandidates.size > K * 2) {
-                allCandidates.sortBy { it.cost }
-            }
+            allCandidates.sortBy { it.cost }
             val kept = mutableListOf<Node>()
             val seenHashes = mutableSetOf<Long>()
             for (node in allCandidates) {
@@ -1334,7 +1336,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 if (seenHashes.add(pathHash)) {
                     kept.add(node)
                 }
-                if (kept.size >= K * 2) break
+                if (kept.size >= K * 3) break
             }
             dp[endPos] = kept
         }

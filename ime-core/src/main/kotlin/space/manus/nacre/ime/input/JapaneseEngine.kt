@@ -31,12 +31,12 @@ class JapaneseEngine {
                     i += 2
                     continue
                 }
-                // nn → ん (double-n convention)
-                // Always consume both n's: "nni" → ん+い, "nna" → ん+あ
-                // To type んな, use n'na or nna will give んあ
+                // nn → ん (consume only first n, leave second for next iteration)
+                // This way: "nna" → ん+な, "nni" → ん+に, "nnya" → ん+にゃ
+                // "nn" at end → ん+n(pending) or ん+ん(finalize)
                 if (i + 1 < lower.length && lower[i + 1] == 'n') {
                     result.append("ん")
-                    i += 2  // consume both n's
+                    i += 1  // consume only first n — second n starts next syllable
                     continue
                 }
                 // n + consonant (not n, not vowel, not y) → ん + keep consonant
@@ -46,35 +46,16 @@ class JapaneseEngine {
                     i += 1
                     continue
                 }
-                // n + y → check if this is truly a ny-row kana (nya/nyu/nyo etc.)
-                // or if it should be ん + y-row kana.
-                // Key insight: if there was a preceding kana just consumed (i.e. i > 0
-                // and the previous char was consumed as part of a kana), then this 'n'
-                // starts a new syllable. We need to check if "ny*" forms a valid
-                // table entry. If it does, it could be either にゃ or ん+や.
-                // Disambiguation: if the 'n' is preceded by a vowel that completed a
-                // kana (meaning the previous romaji chunk ended), treat as ん + y-row.
-                // In practice: check if removing 'n' leaves a valid next syllable via y-row.
+                // n + y + vowel → always treat as ny-row kana (にゃ/にゅ/にょ etc.)
+                // e.g. dounyuu → どう+にゅう, kinyuu → き+にゅう
+                // To type ん+や, use nn'ya or nnya (nn rule above handles ん first)
+                // ny without following vowel: n is pending, fall through to table match
                 if (i + 1 < lower.length && lower[i + 1] == 'y') {
-                    // Look ahead: is there a vowel after 'y'?
+                    // ny+vowel → fall through to table match for nya/nyu/nyo
                     if (i + 2 < lower.length && lower[i + 2] in VOWELS) {
-                        // We have ny+vowel. Disambiguation:
-                        // - Word-initial (i==0): always にゃ etc. (table match)
-                        // - After a vowel or ん: this 'n' starts a new syllable → ん + y-row
-                        //   e.g. "konnya" → こん+にゃ NOT こん+ん+や (handled by nn rule above)
-                        //   BUT "kannya" → かん+にゃ — nn already consumed → this 'n' is にゃ start
-                        // - After a consonant: ambiguous, but safer to treat as nya table match
-                        // Key: only emit ん if the character BEFORE this 'n' was a vowel
-                        // (meaning a kana was just completed and this n is a new syllable)
-                        val prevIsVowel = i > 0 && lower[i - 1] in VOWELS
-                        if (prevIsVowel) {
-                            result.append("ん")
-                            i += 1  // leave 'y'+vowel for table match → や/ゆ/よ
-                            continue
-                        }
-                        // else: fall through to table match for nya/nyu/nyo
+                        // Fall through — table match will handle nyu→にゅ, nya→にゃ etc.
                     }
-                    // ny without following vowel: n is pending, fall through
+                    // ny without vowel: fall through
                 }
                 // n + vowel → fall through to table match (na/ni/nu/ne/no)
                 // trailing n: convert only if finalizing
@@ -181,8 +162,14 @@ class JapaneseEngine {
             "pya" to "ぴゃ", "pyi" to "ぴぃ", "pyu" to "ぴゅ", "pye" to "ぴぇ", "pyo" to "ぴょ",
             // Foreign sounds (カタカナ語用)
             "fa" to "ふぁ", "fi" to "ふぃ", "fe" to "ふぇ", "fo" to "ふぉ",
-            "thi" to "てぃ", "dhi" to "でぃ",
+            "fya" to "ふゃ", "fyu" to "ふゅ", "fyo" to "ふょ",
+            "thi" to "てぃ", "the" to "てぇ", "tha" to "てゃ", "tho" to "てょ",
+            "dhi" to "でぃ", "dhe" to "でぇ", "dha" to "でゃ", "dho" to "でょ",
             "dhu" to "でゅ", "thu" to "てゅ",
+            "twa" to "とぁ", "twi" to "とぃ", "twu" to "とぅ", "twe" to "とぇ", "two" to "とぉ",
+            "dwa" to "どぁ", "dwi" to "どぃ", "dwu" to "どぅ", "dwe" to "どぇ", "dwo" to "どぉ",
+            "gwa" to "ぐぁ", "gwi" to "ぐぃ", "gwu" to "ぐぅ", "gwe" to "ぐぇ", "gwo" to "ぐぉ",
+            "qa" to "くぁ", "qi" to "くぃ", "qu" to "く", "qe" to "くぇ", "qo" to "くぉ",
             "tsa" to "つぁ", "tsi" to "つぃ", "tse" to "つぇ", "tso" to "つぉ",
             "va" to "ゔぁ", "vi" to "ゔぃ", "vu" to "ゔ", "ve" to "ゔぇ", "vo" to "ゔぉ",
             // Small kana
@@ -193,6 +180,9 @@ class JapaneseEngine {
             "la" to "ぁ", "li" to "ぃ", "lu" to "ぅ", "le" to "ぇ", "lo" to "ぉ",
             "lya" to "ゃ", "lyu" to "ゅ", "lyo" to "ょ",
             "ltu" to "っ", "ltsu" to "っ",
+            "lwa" to "ゎ", "xwa" to "ゎ",
+            "lka" to "ゕ", "xka" to "ゕ",
+            "lke" to "ゖ", "xke" to "ゖ",
             // Additional yōon variants
             "zya" to "じゃ", "zyi" to "じぃ", "zyu" to "じゅ", "zye" to "じぇ", "zyo" to "じょ",
             "dya" to "ぢゃ", "dyi" to "ぢぃ", "dyu" to "ぢゅ", "dye" to "ぢぇ", "dyo" to "ぢょ",

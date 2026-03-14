@@ -118,8 +118,9 @@ class NacreInputMethodService :
         // Check LLM server availability (non-blocking)
         inputEngine.llmReranker.checkServer()
 
-        // Load dictionary in background, publish on Main
+        // Load dictionary in background at low priority, publish on Main
         serviceScope.launch(Dispatchers.IO) {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val dict = NacreDictionary(this@NacreInputMethodService)
             try {
                 dict.load()
