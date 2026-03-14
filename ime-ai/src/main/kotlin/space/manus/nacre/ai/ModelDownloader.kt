@@ -183,7 +183,30 @@ class ModelDownloader(private val context: Context) {
         scope.cancel()
     }
 
+    /**
+     * Download the KenLM 5-gram Japanese language model.
+     * Trained on Wikipedia (~561MB). Significantly improves conversion accuracy.
+     */
+    fun downloadKenLm(onComplete: (Boolean) -> Unit) {
+        downloadModel(
+            url = KENLM_URL,
+            modelName = "KenLM 日本語5-gram",
+            fileName = KENLM_FILENAME,
+            onComplete = onComplete,
+        )
+    }
+
+    /**
+     * Get KenLM model file if it exists.
+     */
+    fun getKenLmModel(): File? {
+        val file = File(getModelsDir(), KENLM_FILENAME)
+        return if (file.exists()) file else null
+    }
+
     companion object {
         private const val TAG = "ModelDownloader"
+        const val KENLM_FILENAME = "japanese-5gram.klm"
+        const val KENLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/japanese-5gram.klm"
     }
 }
