@@ -31,12 +31,20 @@ class JapaneseEngine {
                     i += 2
                     continue
                 }
-                // nn → ん (consume only first n, leave second for next iteration)
-                // This way: "nna" → ん+な, "nni" → ん+に, "nnya" → ん+にゃ
-                // "nn" at end → ん+n(pending) or ん+ん(finalize)
+                // nn handling — context-dependent:
+                // "nna" → ん+な, "nni" → ん+に, "nnya" → ん+にゃ (consume 1 n)
+                // "nnd" → ん+d, "nnk" → ん+k (consume 2 n's — second n has no following vowel)
+                // "nn" at end → ん (consume 2)
                 if (i + 1 < lower.length && lower[i + 1] == 'n') {
                     result.append("ん")
-                    i += 1  // consume only first n — second n starts next syllable
+                    // Check what follows the second n:
+                    // If nn + vowel/y → consume only first n (second n starts na/ni/nu/ne/no/nya...)
+                    // If nn + consonant or nn at end → consume both n's (second n has no role)
+                    if (i + 2 < lower.length && (lower[i + 2] in VOWELS || lower[i + 2] == 'y')) {
+                        i += 1  // consume only first n — second n starts next syllable
+                    } else {
+                        i += 2  // consume both n's — "nn" at end or nn+consonant
+                    }
                     continue
                 }
                 // n + consonant (not n, not vowel, not y) → ん + keep consonant

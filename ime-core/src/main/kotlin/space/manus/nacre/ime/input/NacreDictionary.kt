@@ -50,6 +50,9 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     private val recentHistory = java.util.LinkedList<ConversionCandidate>()
     private val maxHistory = 200
 
+    // Static bigram data: "prevSurface→nextReading:nextSurface" → boost value
+    private val staticBigrams = HashMap<String, Int>(2000)
+
     // English word dictionary (hiragana reading → English words)
     private val englishDict = HashMap<String, MutableList<DictEntry>>(5000)
 
@@ -109,6 +112,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         loadEnglishDict()
         buildRomajiEnglishIndex()
         loadEnglishFullDict()
+        loadStaticBigrams()
         loadUserBoost()
 
         loaded = true
@@ -308,6 +312,20 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         // 2. Viterbi multi-word conversion (best segmentation)
         addUnique(viterbiConvert(kana))
 
+        // 2.5 Kana variant conversion (を→お/うぉ, ぢ→じ, づ→ず etc.)
+        // Google日本語入力方式: ローマ字テーブルは標準のまま、変換段階で読み替え候補を生成
+        val kanaVariants = generateKanaVariants(kana)
+        for (variant in kanaVariants) {
+            val variantExact = exactMatch(variant)
+            for (c in variantExact) {
+                if (seen.add(c.surface)) results.add(c.copy(cost = c.cost + 300))
+            }
+            val variantViterbi = viterbiConvert(variant).take(5)
+            for (c in variantViterbi) {
+                if (seen.add(c.surface)) results.add(c.copy(cost = c.cost + 500))
+            }
+        }
+
         // 3. Partial segmentation for diversity (with POS connection cost)
         if (results.size < 12 && kana.length >= 3) {
             for (splitAt in (kana.length - 1) downTo 2) {
@@ -421,6 +439,15 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
         // 2. Viterbi multi-word conversion
         addUnique(viterbiConvert(kana).take(8))
+
+        // 2.5 Kana variant conversion (を→お/うぉ, ぢ→じ etc.)
+        val kanaVariants = generateKanaVariants(kana)
+        for (variant in kanaVariants) {
+            val variantResults = exactMatch(variant) + viterbiConvert(variant).take(3)
+            for (c in variantResults) {
+                if (seen.add(c.surface)) results.add(c.copy(cost = c.cost + 500))
+            }
+        }
 
         // 3. Prefix match
         if (results.size < 15) {
@@ -649,10 +676,15 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             trigramBoost["$secondLastCommittedSurface→$lastCommittedSurface→$key"] ?: 0
         } else 0
 
+        // Static bigram boost (from bigrams.tsv — common Japanese collocations)
+        val staticBoostVal = if (lastCommittedSurface.isNotEmpty()) {
+            staticBigrams["$lastCommittedSurface→$key"] ?: 0
+        } else 0
+
         val unigramBoostVal = minOf(unigramCount, 5) * 1200
         val bigramBoostVal = minOf(bigramCount, 4) * 2000
         val trigramBoostVal = minOf(trigramCount, 3) * 3000
-        val totalBoost = minOf(unigramBoostVal + bigramBoostVal + trigramBoostVal, 15000)
+        val totalBoost = minOf(unigramBoostVal + bigramBoostVal + trigramBoostVal + staticBoostVal, 18000)
         return maxOf(100, baseCost - totalBoost)
     }
 
@@ -698,6 +730,54 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             val lmBonus = (scores[i] * -KENLM_WEIGHT / kotlin.math.sqrt(wordCount.toFloat())).toInt()
             candidates[i] = candidates[i].copy(cost = candidates[i].cost + lmBonus)
         }
+    }
+
+    // --- Kana variant generation (Google日本語入力方式の読み替え) ---
+
+    /**
+     * Generate alternative kana readings for conversion.
+     * Handles cases where standard romaji mapping produces one kana but
+     * the user may intend another pronunciation.
+     *
+     * Examples:
+     * - ちぇをん → ちぇうぉん (を→うぉ for loanwords like チェウォン)
+     * - を → お (を as vowel 'o' in compound words)
+     * - ぢ → じ, づ → ず (四つ仮名の読み替え)
+     * - ゐ → い, ゑ → え (historical kana)
+     */
+    private fun generateKanaVariants(kana: String): List<String> {
+        val variants = mutableSetOf<String>()
+
+        // を → うぉ replacement (loanword pronunciation)
+        if ('を' in kana) {
+            variants.add(kana.replace("を", "うぉ"))
+            // Also try を → お (common in compound words)
+            variants.add(kana.replace("を", "お"))
+        }
+
+        // ぢ ↔ じ (四つ仮名)
+        if ('ぢ' in kana) {
+            variants.add(kana.replace('ぢ', 'じ'))
+        }
+        if ('じ' in kana && kana.length <= 8) {
+            variants.add(kana.replace('じ', 'ぢ'))
+        }
+
+        // づ ↔ ず
+        if ('づ' in kana) {
+            variants.add(kana.replace('づ', 'ず'))
+        }
+        if ('ず' in kana && kana.length <= 8) {
+            variants.add(kana.replace('ず', 'づ'))
+        }
+
+        // ゐ → い, ゑ → え (historical)
+        if ('ゐ' in kana) variants.add(kana.replace('ゐ', 'い'))
+        if ('ゑ' in kana) variants.add(kana.replace('ゑ', 'え'))
+
+        // Remove the original kana from variants
+        variants.remove(kana)
+        return variants.toList().take(4)  // Limit to avoid explosion
     }
 
     // --- Internal ---
@@ -816,6 +896,36 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             Log.i("NacreDictionary", "English full dict loaded: ${englishFullDict.size} keys, ${englishSortedKeys.size} sorted")
         } catch (e: Exception) {
             Log.i("NacreDictionary", "No english_full.tsv found (optional)")
+        }
+    }
+
+    /**
+     * Load static bigram data from bigrams.tsv.
+     * Format: prev_surface\tnext_reading\tnext_surface\tboost
+     */
+    private fun loadStaticBigrams() {
+        try {
+            context.assets.open("dict/bigrams.tsv").use { stream ->
+                BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
+                    var count = 0
+                    reader.forEachLine { line ->
+                        if (line.isBlank() || line.startsWith('#')) return@forEachLine
+                        val parts = line.split('\t')
+                        if (parts.size >= 4) {
+                            val prevSurface = parts[0]
+                            val nextReading = parts[1]
+                            val nextSurface = parts[2]
+                            val boost = parts[3].toIntOrNull() ?: 1000
+                            val key = "$prevSurface→$nextReading:$nextSurface"
+                            staticBigrams[key] = boost
+                            count++
+                        }
+                    }
+                    Log.i("NacreDictionary", "Static bigrams loaded: $count entries")
+                }
+            }
+        } catch (e: Exception) {
+            Log.i("NacreDictionary", "No bigrams.tsv found (optional)")
         }
     }
 
@@ -1079,7 +1189,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
-        // 2. Common misreading patterns
+        // 2. Common misreading patterns (Google日本語入力が補正するパターンを網羅)
         val corrections = mapOf(
             "ふいんき" to "ふんいき",  // 雰囲気
             "たいく" to "たいいく",    // 体育
@@ -1097,6 +1207,16 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             "うるおぼえ" to "うろおぼえ", // うろ覚え
             "さいさき" to "さいさき",    // 幸先
             "やくばらい" to "やくばらい", // 厄払い
+            // 追加: よくある誤入力パターン
+            "てきかく" to "てきかく",    // 的確
+            "ていかく" to "てきかく",    // 的確（誤読）
+            "きゅうきょく" to "きゅうきょく", // 究極
+            "ふんいき" to "ふんいき",    // 雰囲気（正しい読み）
+            "ひつじゅひん" to "ひつじゅひん", // 必需品
+            "がいいん" to "げいいん",    // 原因の誤読→正しくは「げんいん」
+            "げいいん" to "げんいん",    // 原因
+            "しゅうちゅう" to "しゅうちゅう", // 集中
+            "かんぺき" to "かんぺき",    // 完璧
             "かんぺき" to "かんぺき",    // 完璧
             "ていきゅう" to "ていきゅう", // 定休
             "しんちょく" to "しんちょく", // 進捗
