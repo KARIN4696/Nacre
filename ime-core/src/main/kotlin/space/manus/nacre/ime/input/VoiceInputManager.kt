@@ -134,14 +134,12 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_CONFIDENCE_SCORES, true)
-            // Prefer offline recognition for lower latency
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Maximum silence tolerance — never cut off early
-            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 120000L)
-            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 15000L)
-            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 10000L)
-            // Dictation mode hint (some engines support this)
-            putExtra("android.speech.extra.DICTATION_MODE", true)
+            // Offline preference disabled — causes ERROR_NO_MATCH on devices
+            // without offline model downloaded. Let the engine decide.
+            // putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            // Silence tolerance — generous but within engine limits
+            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 5000L)
+            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 3000L)
             // Web search bias off (better for natural language)
             putExtra(RecognizerIntent.EXTRA_WEB_SEARCH_ONLY, false)
         }
@@ -545,19 +543,24 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
             // In continuous mode, auto-restart on recoverable errors
             if (continuousMode && error in RECOVERABLE_ERRORS) {
-                // Show error only if consecutive (avoid flashing for normal restarts)
-                if (consecutiveErrors > 2) {
-                    lastError = msg
-                }
+                // Always show error so user knows what's happening
+                lastError = msg
                 partialText = ""
                 rmsLevel = 0f
 
-                // Exponential backoff: 0ms, 0ms, 50ms, 100ms, 200ms, ...
-                val delay = when {
-                    consecutiveErrors <= 2 -> 0L
-                    consecutiveErrors <= 5 -> 50L * (consecutiveErrors - 2)
-                    else -> 500L
+                // Give up after too many consecutive errors
+                if (consecutiveErrors > 5) {
+                    Log.w(TAG, "Too many consecutive errors ($consecutiveErrors), stopping")
+                    lastError = msg
+                    partialText = ""
+                    rmsLevel = 0f
+                    isListening = false
+                    continuousMode = false
+                    return
                 }
+
+                // Exponential backoff: 100ms, 200ms, 400ms, 800ms, ...
+                val delay = (100L * (1 shl (consecutiveErrors - 1).coerceAtMost(4)))
 
                 mainHandler.postDelayed({
                     if (continuousMode && isBatteryOk()) {
