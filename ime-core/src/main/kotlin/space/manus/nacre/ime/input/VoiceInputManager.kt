@@ -409,6 +409,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     /**
      * 文末に自然な句読点を自動追加する。
      * convertVoiceCommands() で明示的に入力された句読点がある場合はスキップ。
+     * KenLMが利用可能な場合、パターンマッチに該当しない境界ケースで
+     * 「？」「！」「。」のスコアを比較して最適な句読点を選択する。
      */
     private fun smartPunctuation(text: String): String {
         if (text.isEmpty()) return text
@@ -419,7 +421,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         val hasJapanese = text.any { it.code in 0x3000..0x9FFF || it.code in 0xFF00..0xFFEF }
 
         if (hasJapanese) {
-            // 疑問パターン（より広範にカバー）
+            // 疑問パターン（明確なケース）
             if (text.endsWith("ですか") || text.endsWith("ますか") ||
                 text.endsWith("でしょうか") || text.endsWith("かな") ||
                 text.endsWith("だろうか") || text.endsWith("じゃないか") ||
@@ -437,7 +439,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             ) {
                 return "$text？"
             }
-            // 感嘆パターン
+            // 感嘆パターン（明確なケース）
             if (text.endsWith("すごい") || text.endsWith("やばい") ||
                 text.endsWith("ください") || text.endsWith("だろ") ||
                 text.endsWith("するな") || text.endsWith("するぞ") ||
@@ -446,8 +448,23 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             ) {
                 return "$text！"
             }
-            // 読点で区切られた文の途中: 次のutteranceとの結合を想定して「、」は付けない
-            // デフォルトは句点
+
+            // KenLM-assisted punctuation for ambiguous cases
+            val scorer = (service.inputEngine.dictionary as? NacreDictionary)?.kenLmScorer
+            if (scorer != null && scorer.isReady()) {
+                val context = committedInSession.toString().takeLast(20)
+                val scores = scorer.scoreBatch(
+                    listOf(listOf("$text。"), listOf("$text？"), listOf("$text！")),
+                    context,
+                )
+                val bestIdx = scores.indices.maxByOrNull { scores[it] } ?: 0
+                return when (bestIdx) {
+                    1 -> "$text？"
+                    2 -> "$text！"
+                    else -> "$text。"
+                }
+            }
+
             return "$text。"
         } else {
             val lower = text.lowercase()
@@ -479,12 +496,45 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         return if (lastCommitted != ' ') " $text" else text
     }
 
+    /**
+     * Select the best recognition result using confidence scores + KenLM language model.
+     * If KenLM is available, re-rank candidates by combining engine confidence with
+     * language model probability. This catches common mis-recognitions like
+     * "こんにちわ" vs "こんにちは" where the LM strongly prefers the correct form.
+     */
     private fun selectBestResult(results: Bundle?): String {
         val alternatives = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             ?: return ""
         if (alternatives.isEmpty()) return ""
+        if (alternatives.size == 1) return alternatives[0]
 
         val confidences = results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+
+        // Try KenLM re-ranking if available
+        val scorer = (service.inputEngine.dictionary as? NacreDictionary)?.kenLmScorer
+        if (scorer != null && scorer.isReady()) {
+            val precedingContext = committedInSession.toString().takeLast(30)
+            val sentences = alternatives.map { listOf(it) }
+            val lmScores = scorer.scoreBatch(sentences, precedingContext)
+
+            // Combined score: confidence × weight + LM score × weight
+            // LM scores are log10 probabilities (negative), higher = better
+            var bestIdx = 0
+            var bestScore = Float.MIN_VALUE
+            for (i in alternatives.indices) {
+                val conf = if (confidences != null && i < confidences.size) confidences[i] else 0.5f
+                // Normalize confidence (0-1) to similar scale as LM scores
+                // LM scores are typically -10 to -2 range
+                val combined = conf * 5f + lmScores[i] * 0.3f
+                if (combined > bestScore) {
+                    bestScore = combined
+                    bestIdx = i
+                }
+            }
+            return alternatives[bestIdx]
+        }
+
+        // Fallback: use confidence scores only
         if (confidences != null && confidences.size == alternatives.size) {
             var bestIdx = 0
             var bestConf = confidences[0]
@@ -494,7 +544,6 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                     bestIdx = i
                 }
             }
-            // Log.d removed: never log recognized voice text (alternatives contain user speech)
             return alternatives[bestIdx]
         }
         return alternatives[0]
