@@ -274,22 +274,42 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
      * Find the boundary of the stable prefix in partial text.
      * For Japanese: commit up to the last particle/punctuation boundary.
      * For English: commit up to the last space (complete words only).
+     *
+     * When KenLM is available, verify the chosen boundary by scoring:
+     * if the prefix forms a natural sentence fragment, commit it.
+     * If not, try earlier boundaries.
      */
     private fun findStablePrefix(text: String): Int {
         if (text.length < 3) return 0
         val hasJapanese = text.any { it.code in 0x3000..0x9FFF || it.code in 0xFF00..0xFFEF }
 
         if (hasJapanese) {
-            // Commit up to 80% of text — leave the rest as "being edited"
+            // Collect candidate break points (particle/punctuation boundaries)
             val target = (text.length * 0.8).toInt()
-            // Find a natural break point near the target
+            val candidates = mutableListOf<Int>()
             for (i in target downTo (text.length / 2)) {
                 val c = text[i]
-                if (c in "。、！？「」（）") return i + 1
-                // Particle boundaries
-                if (i > 0 && c in "はがをにでとのもへやかなけど") return i + 1
+                if (c in "。、！？「」（）") {
+                    candidates.add(i + 1)
+                } else if (i > 0 && c in "はがをにでとのもへやかなけど") {
+                    candidates.add(i + 1)
+                }
             }
-            return target
+
+            // If no natural break points, fall back to target position
+            if (candidates.isEmpty()) return target
+
+            // With KenLM: pick the boundary that creates the highest-scoring prefix
+            val scorer = (service.inputEngine.dictionary as? NacreDictionary)?.kenLmScorer
+            if (scorer != null && scorer.isReady() && candidates.size > 1) {
+                val context = committedInSession.toString().takeLast(20)
+                val prefixes = candidates.take(4).map { listOf(text.substring(0, it)) }
+                val scores = scorer.scoreBatch(prefixes, context)
+                val bestIdx = scores.indices.maxByOrNull { scores[it] } ?: 0
+                return candidates[bestIdx]
+            }
+
+            return candidates.first()
         } else {
             // English: commit complete words only
             val lastSpace = text.lastIndexOf(' ', text.length - 2)
@@ -663,6 +683,14 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             partialStableCount = 0
             lastPartialText = ""
             consecutiveErrors = 0
+
+            // Auto-detect language for next utterance based on committed text.
+            // If the user just spoke English, switch to en-US for the next recognition.
+            // If Japanese, switch back to ja-JP. This enables seamless bilingual input.
+            if (text.isNotEmpty()) {
+                val asciiRatio = text.count { it.code in 0x20..0x7E }.toFloat() / text.length
+                currentLanguage = if (asciiRatio > 0.7f) "en-US" else "ja-JP"
+            }
 
             // Zero-gap continuous restart
             if (continuousMode && isBatteryOk()) {

@@ -511,10 +511,12 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         if (kana.length >= 2) {
             val katakana = hiraganaToKatakana(kana)
             if (katakana != kana && seen.add(katakana)) {
-                results.add(ConversionCandidate(surface = katakana, reading = kana, cost = 5800))
+                val katakanaCost = estimateKatakanaCost(kana, results)
+                results.add(ConversionCandidate(surface = katakana, reading = kana, cost = katakanaCost))
             }
             if (seen.add(kana)) {
-                results.add(ConversionCandidate(surface = kana, reading = kana, cost = 5500))
+                val maxCost = results.maxOfOrNull { it.cost } ?: 5000
+                results.add(ConversionCandidate(surface = kana, reading = kana, cost = maxCost + 200))
             }
         }
 
@@ -701,15 +703,29 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     /**
      * POS-aware cost adjustment for a candidate given the current committed context.
      * Rewards natural POS transitions, penalizes unnatural ones.
+     *
+     * The connection cost matrix (Mozc /3 scaled) has these typical ranges:
+     * - Natural transitions (noun→particle, verb→auxiliary): 200-800
+     * - Neutral transitions: 800-1200
+     * - Unnatural transitions (particle→particle, adj→noun directly): 2000-6000
+     *
+     * We use a neutral point of 800 and asymmetric scaling:
+     * - Good transitions get a bonus (÷2 to avoid over-reliance)
+     * - Bad transitions get a stronger penalty (÷1.5) to push them down
      */
     private fun posContextCost(reading: String, surface: String, baseCost: Int): Int {
         if (lastRightGroup == 0) return baseCost
         val entries = dict[reading]
         val entry = entries?.firstOrNull { it.surface == surface } ?: return baseCost
         val connCost = getConnectionCost(lastRightGroup, entry.leftGroup)
-        // With full Mozc matrix (/3 scaled): natural ~650, unnatural ~4000
-        // Neutral point 900 (shifted down to reward good transitions)
-        return baseCost + (connCost - 900) / 2
+        val delta = connCost - 800
+        return if (delta <= 0) {
+            // Good transition: mild bonus
+            baseCost + delta / 2
+        } else {
+            // Bad transition: stronger penalty
+            baseCost + (delta * 2) / 3
+        }
     }
 
     /**
@@ -732,12 +748,26 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
         val scores = scorer.scoreBatch(segmentLists, precedingContext)
 
+        // Dynamic KenLM weight: longer input = more context = higher trust in LM
+        // Short (1-3 chars): weight 1800 — dict cost is more reliable
+        // Medium (4-7 chars): weight 2500 — balanced
+        // Long (8+ chars): weight 3200 — LM context is crucial
+        val totalChars = candidates.firstOrNull()?.reading?.length ?: 4
+        val dynamicWeight = when {
+            totalChars <= 3 -> 1800f
+            totalChars <= 7 -> 2500f
+            else -> 3200f
+        }
+
+        // Also increase weight when we have committed context (cross-sentence scoring)
+        val contextWeight = if (committedContext.isNotEmpty()) dynamicWeight * 1.15f else dynamicWeight
+
         for (i in 0 until maxScore) {
             if (i >= scores.size) break
             // scores[i] is log10 prob (negative; higher = better)
             // Use sqrt normalization to mildly favor longer sequences without over-penalizing
             val wordCount = segmentLists[i].size.coerceAtLeast(1)
-            val lmBonus = (scores[i] * -KENLM_WEIGHT / kotlin.math.sqrt(wordCount.toFloat())).toInt()
+            val lmBonus = (scores[i] * -contextWeight / kotlin.math.sqrt(wordCount.toFloat())).toInt()
             candidates[i] = candidates[i].copy(cost = candidates[i].cost + lmBonus)
         }
     }
@@ -1403,7 +1433,13 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             return segments
         }
 
-        val K = if (n <= 6) 20 else if (n <= 10) 18 else 15  // Wide beam for accuracy
+        // Beam width: wider when KenLM is available (LM scoring benefits from more paths)
+        val hasLm = kenLmScorer?.isReady() == true
+        val K = when {
+            n <= 6 -> if (hasLm) 25 else 20
+            n <= 10 -> if (hasLm) 22 else 18
+            else -> if (hasLm) 18 else 15
+        }
         val dp = Array(n + 1) { mutableListOf<Node>() }
         dp[0].add(Node(cost = 0, backPos = -1, surface = "", reading = "", segCount = 0,
             rightGroup = lastRightGroup, prevNode = null, lmState = lmInitState, lmScore = 0f))
@@ -1551,6 +1587,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
      * rank katakana much higher.
      */
     private fun estimateKatakanaCost(kana: String, existingResults: List<ConversionCandidate>): Int {
+        // 1. Dictionary-based: if 50%+ entries are katakana, it's a loanword
         val entries = dict[kana]
         if (entries != null && entries.size >= 2) {
             val katakanaCount = entries.count { surface ->
@@ -1558,14 +1595,49 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
             val ratio = katakanaCount.toFloat() / entries.size
             if (ratio >= 0.5f) {
-                // Loanword-heavy reading: katakana should rank near the top
                 val minCost = existingResults.minOfOrNull { it.cost } ?: 5000
                 return minCost + 200
             }
         }
+
+        // 2. Pattern-based: detect loanword-like readings even without dict entries
+        // Loanword indicators: long vowel patterns, ティ/ディ/ファ/フィ etc., 4+ chars with no kanji match
+        if (isLikelyLoanword(kana)) {
+            val minCost = existingResults.minOfOrNull { it.cost } ?: 5000
+            return minCost + 500
+        }
+
         // Default: katakana at the bottom
         val maxCost = existingResults.maxOfOrNull { it.cost } ?: 5000
         return maxCost + 500
+    }
+
+    /**
+     * Heuristic: detect if a kana reading is likely a loanword (foreign origin).
+     * These readings should have katakana ranked higher.
+     */
+    private fun isLikelyLoanword(kana: String): Boolean {
+        if (kana.length < 4) return false
+        // Foreign-origin syllable patterns (rarely appear in native Japanese)
+        val loanwordSyllables = listOf(
+            "てぃ", "でぃ", "ふぁ", "ふぃ", "ふぇ", "ふぉ",
+            "うぃ", "うぇ", "うぉ", "しぇ", "じぇ", "ちぇ",
+            "つぁ", "つぃ", "つぇ", "つぉ", "ゔぁ", "ゔぃ", "ゔ",
+        )
+        for (syllable in loanwordSyllables) {
+            if (kana.contains(syllable)) return true
+        }
+        // Readings ending with common loanword suffixes
+        val loanwordSuffixes = listOf(
+            "しょん", "にんぐ", "めんと", "ねす",
+            "りてぃ", "ぶる", "とりー", "ありー",
+        )
+        for (suffix in loanwordSuffixes) {
+            if (kana.endsWith(suffix) && kana.length >= suffix.length + 2) return true
+        }
+        // No dict entries at all for 5+ char reading → likely loanword
+        if (kana.length >= 5 && dict[kana] == null) return true
+        return false
     }
 
     /** Convert hiragana to katakana */
