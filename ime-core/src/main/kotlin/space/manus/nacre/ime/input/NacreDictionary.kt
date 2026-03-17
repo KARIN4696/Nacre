@@ -1075,9 +1075,10 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     }
 
     private fun englishMatch(kana: String, limit: Int): List<ConversionCandidate> {
-        if (limit <= 0) return emptyList()
+        if (limit <= 0 || kana.length < 2) return emptyList()
         val results = mutableListOf<ConversionCandidate>()
 
+        // 1. Exact match — no penalty
         val exact = englishDict[kana]
         if (exact != null) {
             for (entry in exact.take(limit)) {
@@ -1089,14 +1090,19 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
+        // 2. Prefix match — penalty proportional to remaining characters
+        // e.g. "あっぷ"(3) matching "あっぷる"(4): penalty = (4-3)/4 * 800 = 200
+        // e.g. "あ"(1) matching "あっぷる"(4): penalty = (4-1)/4 * 800 = 600
         if (results.size < limit) {
             for ((key, entries) in englishDict) {
                 if (key.startsWith(kana) && key != kana) {
+                    val matchRatio = kana.length.toFloat() / key.length
+                    val penalty = ((1f - matchRatio) * 800).toInt()
                     for (entry in entries.take(1)) {
                         results.add(ConversionCandidate(
                             surface = entry.surface,
                             reading = key,
-                            cost = entry.cost + 1000,
+                            cost = entry.cost + penalty,
                         ))
                         if (results.size >= limit) return results.sortedBy { it.cost }
                     }
