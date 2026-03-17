@@ -554,8 +554,9 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
         // Recent history
         recentHistory.removeAll { it.surface == candidate.surface && it.reading == candidate.reading }
-        // Store with a low but non-zero cost so applyBoost context bonuses can still improve ranking
-        val historyCost = minOf(candidate.cost, 3000).coerceAtLeast(500)
+        // Store with a low cost so history candidates rank near the top.
+        // The user explicitly selected this, so it should strongly influence future predictions.
+        val historyCost = minOf(candidate.cost, 2000).coerceAtLeast(300)
         recentHistory.addFirst(candidate.copy(cost = historyCost))
         while (recentHistory.size > maxHistory) recentHistory.removeLast()
 
@@ -681,10 +682,19 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             staticBigrams["$lastCommittedSurface→$key"] ?: 0
         } else 0
 
-        val unigramBoostVal = minOf(unigramCount, 5) * 1200
-        val bigramBoostVal = minOf(bigramCount, 4) * 2000
-        val trigramBoostVal = minOf(trigramCount, 3) * 3000
-        val totalBoost = minOf(unigramBoostVal + bigramBoostVal + trigramBoostVal + staticBoostVal, 18000)
+        // First use gets the biggest boost (diminishing returns after)
+        // 1st use: 2000, 2nd: 3500, 3rd: 4500, 4th: 5200, 5th+: 5500
+        val unigramBoostVal = when {
+            unigramCount >= 5 -> 5500
+            unigramCount >= 4 -> 5200
+            unigramCount >= 3 -> 4500
+            unigramCount >= 2 -> 3500
+            unigramCount >= 1 -> 2000
+            else -> 0
+        }
+        val bigramBoostVal = minOf(bigramCount, 4) * 2500
+        val trigramBoostVal = minOf(trigramCount, 3) * 3500
+        val totalBoost = minOf(unigramBoostVal + bigramBoostVal + trigramBoostVal + staticBoostVal, 22000)
         return maxOf(100, baseCost - totalBoost)
     }
 
