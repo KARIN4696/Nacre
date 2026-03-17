@@ -427,9 +427,12 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             if (h.reading == kana) {
                 h // Exact match — no penalty
             } else {
-                // Prefix match: penalize by unmatched length to prevent stale history domination
+                // Prefix match: penalize proportionally to how much is unmatched.
+                // Short input (1-2 chars): high penalty to avoid history domination
+                // Longer input (3+ chars): lower penalty since it's more likely intentional
                 val unmatched = h.reading.length - kana.length
-                h.copy(cost = h.cost + unmatched * 1500)
+                val perCharPenalty = if (kana.length <= 2) 2000 else 1200
+                h.copy(cost = h.cost + unmatched * perCharPenalty)
             }
         }.take(3)
         addUnique(historyMatches)
@@ -1095,6 +1098,25 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 if (entries != null) {
                     for (e in entries.take(1)) {
                         results.add(ConversionCandidate(e.surface, input, e.cost + 2500))
+                    }
+                }
+            }
+        }
+
+        // Edit distance 2: double deletion (for 5+ char inputs, limited scope)
+        if (results.size < limit && input.length >= 5) {
+            outer@ for (i in input.indices) {
+                val del1 = input.removeRange(i, i + 1)
+                for (j in del1.indices) {
+                    val del2 = del1.removeRange(j, j + 1)
+                    if (del2.length >= 2 && seen.add(del2)) {
+                        val entries = englishFullDict[del2]
+                        if (entries != null) {
+                            for (e in entries.take(1)) {
+                                results.add(ConversionCandidate(e.surface, input, e.cost + 4500))
+                            }
+                            if (results.size >= limit) break@outer
+                        }
                     }
                 }
             }

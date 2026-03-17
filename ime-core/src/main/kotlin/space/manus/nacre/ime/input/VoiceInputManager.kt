@@ -412,16 +412,77 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             "三点" to "…",
             "てんてんてん" to "…",
             "テンテンテン" to "…",
+            "ハイフン" to "ー",
+            "はいふん" to "ー",
+            "マイナス" to "−",
+            "まいなす" to "−",
+            "プラス" to "＋",
+            "ぷらす" to "＋",
+            "イコール" to "＝",
+            "いこーる" to "＝",
+            "アンダーバー" to "＿",
+            "あんだーばー" to "＿",
+            "アットマーク" to "＠",
+            "あっとまーく" to "＠",
+            "シャープ" to "＃",
+            "しゃーぷ" to "＃",
+            "アスタリスク" to "＊",
+            "あすたりすく" to "＊",
+            "パーセント" to "％",
+            "ぱーせんと" to "％",
+            "アンパサンド" to "＆",
+            "あんぱさんど" to "＆",
+            "ドル" to "＄",
+            "どる" to "＄",
+            "えん" to "￥",
+            "円マーク" to "￥",
+            "チルダ" to "～",
+            "ちるだ" to "～",
+            "バックスラッシュ" to "＼",
+            "ばっくすらっしゅ" to "＼",
+            "パイプ" to "｜",
+            "ぱいぷ" to "｜",
             // スペース・改行（文中）
             "かいぎょう" to "\n",
             "改行" to "\n",
         )
 
-        for ((cmd, sym) in inlineCommands) {
-            result = result.replace(cmd, sym)
+        // Words that contain command substrings but should NOT be converted
+        // e.g. "かっこいい" contains "かっこ" but should not become "「いい"
+        val safeWords = setOf(
+            "かっこいい", "カッコイイ", "かっこ悪い", "カッコ悪い",
+            "かっこう", "カッコウ", // 郭公
+            "てんき", "テンキ", "てんきん", "テンキン", // 天気, 転勤
+            "てんけん", "テンケン", // 点検
+            "てんさい", "テンサイ", // 天才
+            "まるで", "マルデ", // まるで〜
+            "まるい", "マルイ", // 丸い / マルイ
+            "まるごと", "マルゴト",
+        )
+
+        // Check if any safe word is present, temporarily replace them
+        var protected = result
+        val placeholders = mutableMapOf<String, String>()
+        for (word in safeWords) {
+            if (protected.contains(word)) {
+                val placeholder = "\u0000${placeholders.size}\u0000"
+                placeholders[placeholder] = word
+                protected = protected.replace(word, placeholder)
+            }
         }
 
-        return result
+        // Apply inline command replacements
+        for ((cmd, sym) in inlineCommands) {
+            protected = protected.replace(cmd, sym)
+        }
+
+        // Restore protected words
+        var final = protected
+        for ((placeholder, word) in placeholders) {
+            final = final.replace(placeholder, word)
+        }
+
+        return final
     }
 
     // ── Smart punctuation ─────────────────────────────────────────────
