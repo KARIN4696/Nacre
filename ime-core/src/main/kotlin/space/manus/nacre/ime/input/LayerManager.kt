@@ -25,6 +25,7 @@ class LayerManager {
 
     var isCommandPaletteRequested by mutableStateOf(false)
     var isEmojiRequested by mutableStateOf(false)
+    var isSymbolsRequested by mutableStateOf(false)
 
     var activePreset: PresetProvider.PresetType = PresetProvider.PresetType.Default
 

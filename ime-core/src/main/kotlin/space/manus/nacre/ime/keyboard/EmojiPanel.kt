@@ -151,14 +151,36 @@ private val CATEGORIES = listOf(
     )),
 )
 
-// Recently used (in-memory for now)
+// Recently used — persisted to SharedPreferences
 private val recentEmojis = mutableStateListOf<String>()
+private var recentEmojisLoaded = false
+
+private fun loadRecentEmojis(service: NacreInputMethodService) {
+    if (recentEmojisLoaded) return
+    recentEmojisLoaded = true
+    try {
+        val prefs = service.getSharedPreferences("nacre_emoji", android.content.Context.MODE_PRIVATE)
+        val data = prefs.getString("recent", null) ?: return
+        val items = data.split("\t").filter { it.isNotEmpty() }
+        recentEmojis.clear()
+        recentEmojis.addAll(items.take(40))
+    } catch (_: Exception) {}
+}
+
+private fun saveRecentEmojis(service: NacreInputMethodService) {
+    try {
+        val prefs = service.getSharedPreferences("nacre_emoji", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("recent", recentEmojis.joinToString("\t")).apply()
+    } catch (_: Exception) {}
+}
 
 @Composable
 fun EmojiPanel(
     service: NacreInputMethodService,
     onDismiss: () -> Unit,
 ) {
+    // Load recent emojis from persistence on first display
+    LaunchedEffect(Unit) { loadRecentEmojis(service) }
     var selectedCategory by remember { mutableIntStateOf(0) }
     val currentEmojis = if (recentEmojis.isNotEmpty() && selectedCategory == -1) {
         recentEmojis.toList()
@@ -228,6 +250,7 @@ fun EmojiPanel(
                             if (recentEmojis.size > 40) {
                                 recentEmojis.removeRange(40, recentEmojis.size)
                             }
+                            saveRecentEmojis(service)
                         },
                     contentAlignment = Alignment.Center,
                 ) {

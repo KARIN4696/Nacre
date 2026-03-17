@@ -34,6 +34,7 @@ fun KeyboardScreen(service: NacreInputMethodService) {
     var showClipboard by remember { mutableStateOf(false) }
     var showCommandPalette by remember { mutableStateOf(false) }
     var showEmoji by remember { mutableStateOf(false) }
+    var showSymbols by remember { mutableStateOf(false) }
 
     // Check if command palette should open (Fn+Space triggers it)
     val isCommandPaletteRequested = service.layerManager.isCommandPaletteRequested
@@ -53,6 +54,15 @@ fun KeyboardScreen(service: NacreInputMethodService) {
         }
     }
 
+    // Check if symbols panel should open
+    val isSymbolsRequested = service.layerManager.isSymbolsRequested
+    LaunchedEffect(isSymbolsRequested) {
+        if (isSymbolsRequested) {
+            showSymbols = true
+            service.layerManager.isSymbolsRequested = false
+        }
+    }
+
     // Overlay panels take over the whole view
     if (showClipboard) {
         ClipboardPanel(service = service, onDismiss = { showClipboard = false })
@@ -64,6 +74,10 @@ fun KeyboardScreen(service: NacreInputMethodService) {
     }
     if (showEmoji) {
         EmojiPanel(service = service, onDismiss = { showEmoji = false })
+        return
+    }
+    if (showSymbols) {
+        SymbolsPanel(service = service, onDismiss = { showSymbols = false })
         return
     }
 

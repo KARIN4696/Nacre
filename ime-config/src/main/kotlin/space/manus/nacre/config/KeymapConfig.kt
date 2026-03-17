@@ -26,6 +26,7 @@ sealed class KeyAction {
     data object SwitchIme : KeyAction()
     data object ToggleJapanese : KeyAction()
     data object Emoji : KeyAction()
+    data object Symbols : KeyAction()
 }
 
 data class KeyboardLayout(
@@ -107,11 +108,11 @@ object DefaultLayouts {
             listOf(
                 KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
                 KeyDef("😀", action = KeyAction.Emoji),
+                KeyDef("#+", label = "#+", action = KeyAction.Symbols),
                 KeyDef("Fn2", action = KeyAction.FnPage2),
-                KeyDef("⇧", action = KeyAction.Shift),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2.5f,
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
             ),
         ),
     )

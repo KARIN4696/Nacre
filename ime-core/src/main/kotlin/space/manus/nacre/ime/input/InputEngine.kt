@@ -454,6 +454,12 @@ class InputEngine(private val service: NacreInputMethodService) {
                 service.layerManager.isEmojiRequested = true
             }
 
+            is KeyAction.Symbols -> {
+                if (isConverting) commitSelectedCandidate(ic)
+                if (composingText.isNotEmpty()) finishComposing(ic)
+                service.layerManager.isSymbolsRequested = true
+            }
+
             is KeyAction.KeyCode -> {
                 if (action.ctrl) {
                     val now = System.currentTimeMillis()
