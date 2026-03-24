@@ -724,10 +724,10 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 val ic = service.currentInputConnection
                 if (ic != null && lastCommittedPartial.isNotEmpty()) {
                     ic.deleteSurroundingText(lastCommittedPartial.length, 0)
-                    committedInSession.delete(
-                        committedInSession.length - lastCommittedPartial.length,
-                        committedInSession.length,
-                    )
+                    val delStart = (committedInSession.length - lastCommittedPartial.length).coerceAtLeast(0)
+                    if (delStart < committedInSession.length) {
+                        committedInSession.delete(delStart, committedInSession.length)
+                    }
                 }
             }
 

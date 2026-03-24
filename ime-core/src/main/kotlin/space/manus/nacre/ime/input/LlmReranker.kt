@@ -71,6 +71,7 @@ class LlmReranker(private val context: Context) {
 
     /**
      * Check if the LLM server is reachable. Called once on IME startup.
+     * Auto-probes multiple common ports if the configured URL fails.
      */
     fun checkServer() {
         scope.launch {
@@ -80,20 +81,43 @@ class LlmReranker(private val context: Context) {
                 serverAvailable = false
                 return@launch
             }
-            serverAvailable = try {
-                val apiType = detectApiType(baseUrl)
-                val checkUrl = if (apiType == "ollama") "$baseUrl/api/tags" else "$baseUrl/health"
-                val conn = URL(checkUrl).openConnection() as HttpURLConnection
-                conn.connectTimeout = 2000
-                conn.readTimeout = 2000
-                conn.requestMethod = "GET"
-                val code = conn.responseCode
-                conn.disconnect()
-                code == 200
-            } catch (_: Exception) {
-                false
+
+            // Try configured URL first, then probe common ports
+            val urlsToTry = listOf(
+                baseUrl,
+                "http://127.0.0.1:8080",
+                "http://127.0.0.1:11434",
+            ).distinct()
+
+            for (url in urlsToTry) {
+                if (!isLocalhostUrl(url)) continue
+                val available = try {
+                    val apiType = detectApiType(url)
+                    val checkUrl = if (apiType == "ollama") "$url/api/tags" else "$url/health"
+                    val conn = URL(checkUrl).openConnection() as HttpURLConnection
+                    conn.connectTimeout = 2000
+                    conn.readTimeout = 2000
+                    conn.requestMethod = "GET"
+                    val code = conn.responseCode
+                    conn.disconnect()
+                    code == 200
+                } catch (_: Exception) {
+                    false
+                }
+                if (available) {
+                    serverAvailable = true
+                    if (url != baseUrl) {
+                        baseUrl = url
+                        Log.i(TAG, "LLM server auto-detected at $url")
+                    }
+                    // Auto-detect model name from server
+                    autoDetectModel(url)
+                    Log.i(TAG, "LLM server check: available=true, url=$url, model=$model")
+                    return@launch
+                }
             }
-            Log.i(TAG, "LLM server check: available=$serverAvailable, url=$baseUrl")
+            serverAvailable = false
+            Log.i(TAG, "LLM server check: available=false (tried ${urlsToTry.size} URLs)")
         }
     }
 
@@ -242,6 +266,36 @@ class LlmReranker(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "LLM call failed: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * Auto-detect model name from the server's /v1/models endpoint.
+     */
+    private fun autoDetectModel(url: String) {
+        try {
+            val apiType = detectApiType(url)
+            val modelsUrl = if (apiType == "ollama") "$url/api/tags" else "$url/v1/models"
+            val conn = URL(modelsUrl).openConnection() as HttpURLConnection
+            conn.connectTimeout = 2000
+            conn.readTimeout = 2000
+            conn.requestMethod = "GET"
+            if (conn.responseCode == 200) {
+                val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                val modelName = if (apiType == "ollama") {
+                    json.optJSONArray("models")?.optJSONObject(0)?.optString("name")
+                } else {
+                    json.optJSONArray("data")?.optJSONObject(0)?.optString("id")
+                        ?: json.optJSONArray("models")?.optJSONObject(0)?.optString("name")
+                }
+                if (!modelName.isNullOrBlank()) {
+                    model = modelName
+                    Log.i(TAG, "Auto-detected model: $modelName")
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            Log.w(TAG, "Model auto-detect failed: ${e.message}")
         }
     }
 
