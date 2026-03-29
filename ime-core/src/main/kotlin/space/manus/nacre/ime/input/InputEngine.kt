@@ -460,18 +460,22 @@ class InputEngine(private val service: NacreInputMethodService) {
                 service.layerManager.isSymbolsRequested = true
             }
 
-            is KeyAction.KeyCode -> {
-                if (action.ctrl) {
-                    val now = System.currentTimeMillis()
-                    ic.sendKeyEvent(
-                        KeyEvent(now, now, KeyEvent.ACTION_DOWN, action.code, 0, KeyEvent.META_CTRL_ON),
-                    )
-                    ic.sendKeyEvent(
-                        KeyEvent(now, now, KeyEvent.ACTION_UP, action.code, 0, KeyEvent.META_CTRL_ON),
-                    )
-                } else {
-                    sendKeyEvent(action.code)
+            is KeyAction.Alt -> service.layerManager.toggleAlt()
+
+            is KeyAction.Henkan -> {
+                if (composingText.isNotEmpty() || composingKana.isNotEmpty()) {
+                    if (isConverting) nextCandidate(ic) else startConversion(ic)
                 }
+            }
+
+            is KeyAction.KeyCode -> {
+                val now = System.currentTimeMillis()
+                var meta = 0
+                if (action.ctrl) meta = meta or KeyEvent.META_CTRL_ON
+                if (service.layerManager.isAltActive) meta = meta or KeyEvent.META_ALT_ON
+                ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, action.code, 0, meta))
+                ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, action.code, 0, meta))
+                if (service.layerManager.isAltActive) service.layerManager.consumeAlt()
             }
         }
     }
@@ -833,8 +837,11 @@ class InputEngine(private val service: NacreInputMethodService) {
 
     private fun sendKeyEvent(keyCode: Int) {
         val ic = service.currentInputConnection ?: return
-        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
-        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        val now = System.currentTimeMillis()
+        val altMeta = if (service.layerManager.isAltActive) KeyEvent.META_ALT_ON else 0
+        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, altMeta))
+        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, altMeta))
+        if (altMeta != 0) service.layerManager.consumeAlt()
     }
 
     fun moveCursor(dx: Int, dy: Int) {

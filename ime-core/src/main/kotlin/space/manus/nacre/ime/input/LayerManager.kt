@@ -23,6 +23,9 @@ class LayerManager {
     var isJapanese by mutableStateOf(true)
         private set
 
+    var isAltActive by mutableStateOf(false)
+        private set
+
     var isCommandPaletteRequested by mutableStateOf(false)
     var isEmojiRequested by mutableStateOf(false)
     var isSymbolsRequested by mutableStateOf(false)
@@ -95,6 +98,18 @@ class LayerManager {
 
     fun requestCommandPalette() {
         isCommandPaletteRequested = true
+    }
+
+    fun toggleAlt() {
+        isAltActive = !isAltActive
+    }
+
+    fun consumeAlt(): Boolean {
+        if (isAltActive) {
+            isAltActive = false
+            return true
+        }
+        return false
     }
 
     fun currentLayout(): KeyboardLayout = when (currentLayer) {
