@@ -27,6 +27,8 @@ sealed class KeyAction {
     data object ToggleJapanese : KeyAction()
     data object Emoji : KeyAction()
     data object Symbols : KeyAction()
+    data object Alt : KeyAction()
+    data object Henkan : KeyAction()
 }
 
 data class KeyboardLayout(
@@ -67,15 +69,15 @@ object DefaultLayouts {
                 key(".", swipeUp = "！", swipeDown = "。"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: Esc Fn ⇧ [⎵⎵⎵] ' [↵↵]
-            // スペースswipe左右で日英切替、Enter大きめ
+            // Row 4: ▲▼ Fn ⇧ [⎵⎵] Alt [↵↵]
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
+                KeyDef("▲", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
+                KeyDef("▼", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("Fn", action = KeyAction.Fn),
                 KeyDef("⇧", action = KeyAction.Shift),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
-                key("'", swipeUp = "\"", swipeDown = ";"),
+                KeyDef("Alt", action = KeyAction.Alt),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
@@ -106,12 +108,14 @@ object DefaultLayouts {
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
+                KeyDef("▲", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
+                KeyDef("▼", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("😀", action = KeyAction.Emoji),
                 KeyDef("#+", label = "#+", action = KeyAction.Symbols),
                 KeyDef("Fn2", action = KeyAction.FnPage2),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 1.5f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
+                KeyDef("Alt", action = KeyAction.Alt),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
             ),
         ),
@@ -150,12 +154,13 @@ object DefaultLayouts {
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
             listOf(
-                KeyDef("Esc", action = KeyAction.Escape, swipeRight = "GL"),
+                KeyDef("▲", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
+                KeyDef("▼", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("Fn", action = KeyAction.Fn),
                 KeyDef("⇧", action = KeyAction.Shift),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
-                key("'", swipeUp = "\"", swipeDown = ";"),
+                KeyDef("Alt", action = KeyAction.Alt),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
