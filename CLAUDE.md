@@ -18,13 +18,13 @@
 
 ```
 app/          — メインアプリ (設定画面, セットアップウィザード)
-ime-core/     — IME サービス本体 (InputEngine, KeyboardScreen, TrackballView)
+ime-core/     — IME サービス本体 (InputEngine, KeyboardScreen, TrackballView, FlickInputPad)
 ime-config/   — キーマップ定義, テーマ, 設定永続化
 ime-ai/       — AI アドオン (whisper.cpp JNI, llama.cpp JNI, AIDL)
 ```
 
 ## Key Layout (Base Layer Row 4)
-`[Tab][Fn][Space(2x)][⇧] | gap/trackball | [BS(1.2x)][Enter(1.2x)][GL][.]`
+`[▲(0.5x)][▼(0.5x)][Fn][⇧][Space(2x)][Alt] [⌫(1.2x)][Enter(1.2x)][GL][.]`
 
 ## Build
 - Termux: `./gradlew :app:assembleDebug`
