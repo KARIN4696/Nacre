@@ -17,6 +17,9 @@ enum class LayoutMode {
 
     /** Minimal macro pad for very small sub-displays (e.g. Z Flip cover). */
     QuickInputPad,
+
+    /** 12-key flick input for Japanese on foldable sub-displays. */
+    FlickInput12Key,
 }
 
 /**
@@ -48,7 +51,7 @@ class LayoutSelector(private val detector: FoldableDetector) {
      *
      * Decision tree:
      *  - widthDp >= 500  -> FullVSplit (tablet / unfolded main display)
-     *  - foldable sub    -> user preference (default CompactQwerty)
+     *  - foldable sub    -> user preference (default FlickInput12Key)
      *  - widthDp >= 380  -> StandardQwerty (normal phone)
      *  - widthDp >= 200  -> QuickInputPad (very small sub-display)
      *  - else            -> QuickInputPad (fallback)
@@ -66,11 +69,11 @@ class LayoutSelector(private val detector: FoldableDetector) {
     }
 
     private fun loadSubDisplayMode(): LayoutMode {
-        val name = prefs.getString(KEY_SUB_DISPLAY_MODE, LayoutMode.CompactQwerty.name)
+        val name = prefs.getString(KEY_SUB_DISPLAY_MODE, LayoutMode.FlickInput12Key.name)
         return try {
-            LayoutMode.valueOf(name ?: LayoutMode.CompactQwerty.name)
+            LayoutMode.valueOf(name ?: LayoutMode.FlickInput12Key.name)
         } catch (_: IllegalArgumentException) {
-            LayoutMode.CompactQwerty
+            LayoutMode.FlickInput12Key
         }
     }
 }
