@@ -84,7 +84,11 @@ fun KeyboardScreen(service: NacreInputMethodService) {
     when (layoutMode) {
         space.manus.nacre.ime.foldable.LayoutMode.FullVSplit ->
             VSplitKeyboardScreen(service = service, angle = 4f)
-        else ->
+        space.manus.nacre.ime.foldable.LayoutMode.FlickInput12Key ->
+            FlickInputPad(service = service)
+        space.manus.nacre.ime.foldable.LayoutMode.StandardQwerty,
+        space.manus.nacre.ime.foldable.LayoutMode.CompactQwerty,
+        space.manus.nacre.ime.foldable.LayoutMode.QuickInputPad ->
             StandardKeyboardScreen(service = service)
     }
 }
@@ -145,6 +149,7 @@ private fun StatusBar(
     val showLayer = layerManager.currentLayer != Layer.Base
     val showJa = layerManager.isJapanese
     val showShift = layerManager.isShifted
+    val showAlt = layerManager.isAltActive
     val voiceManager = service.voiceInputManager
     val isListening = voiceManager.isListening
 
@@ -161,6 +166,9 @@ private fun StatusBar(
             }
             if (showShift) {
                 Text(text = "⇧", color = accentColor, fontSize = 10.sp)
+            }
+            if (showAlt) {
+                Text(text = "Alt", color = accentColor, fontSize = 10.sp)
             }
         }
 

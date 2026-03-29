@@ -82,14 +82,19 @@ fun KeyView(
     val isFnKey = keyDef.action is KeyAction.Fn ||
         keyDef.action is KeyAction.FnPage2
 
+    val isAltKey = keyDef.action is KeyAction.Alt
+    val isAltActive = isAltKey && service.layerManager.isAltActive
+
     val bgColor = when {
         isPressed -> KeyBgPressed
+        isAltActive -> KeyBgPressed
         isFnKey -> KeyBg
         else -> KeyBg
     }
 
     val textColor = when {
         isPressed -> GlowColor
+        isAltActive -> GlowColor
         else -> KeyText
     }
 
@@ -149,6 +154,8 @@ fun KeyView(
                     is KeyAction.Shift -> "Shift"
                     is KeyAction.ToggleJapanese -> "Toggle Japanese"
                     is KeyAction.Emoji -> "Emoji"
+                    is KeyAction.Alt -> "Alt"
+                    is KeyAction.Henkan -> "Henkan"
                     else -> keyDef.label
                 }
             }
