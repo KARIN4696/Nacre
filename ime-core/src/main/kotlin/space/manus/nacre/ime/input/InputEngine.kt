@@ -27,6 +27,7 @@ class InputEngine(private val service: NacreInputMethodService) {
     private var editorInfo: EditorInfo? = null
     private val japaneseEngine = JapaneseEngine()
     private var composingText: String = ""
+    private var composingFlickKana: String = ""
     private var predictionJob: Job? = null
 
     // LLM-based candidate reranking (optional, async)
@@ -82,6 +83,7 @@ class InputEngine(private val service: NacreInputMethodService) {
     fun onStartInput(info: EditorInfo?) {
         editorInfo = info
         composingText = ""
+        composingFlickKana = ""
         composingKana = ""
         japaneseEngine.reset()
         clearCandidates()
@@ -463,7 +465,9 @@ class InputEngine(private val service: NacreInputMethodService) {
             is KeyAction.Alt -> service.layerManager.toggleAlt()
 
             is KeyAction.Henkan -> {
-                if (composingText.isNotEmpty() || composingKana.isNotEmpty()) {
+                if (composingFlickKana.isNotEmpty()) {
+                    if (isConverting) nextCandidate(ic) else startFlickConversion(ic)
+                } else if (composingText.isNotEmpty()) {
                     if (isConverting) nextCandidate(ic) else startConversion(ic)
                 }
             }
@@ -623,6 +627,7 @@ class InputEngine(private val service: NacreInputMethodService) {
             ic.commitText(kana, 1)
         }
         composingText = ""
+        composingFlickKana = ""
         composingKana = ""
         japaneseEngine.reset()
         clearCandidates()
@@ -740,6 +745,7 @@ class InputEngine(private val service: NacreInputMethodService) {
         // Update bigram context
         (dictionary as? NacreDictionary)?.updateContext(kana)
         composingText = ""
+        composingFlickKana = ""
         composingKana = ""
         japaneseEngine.reset()
         clearCandidates()
@@ -752,6 +758,7 @@ class InputEngine(private val service: NacreInputMethodService) {
         selectedCandidateIndex = -1
         isConverting = false
         symbolReplace = null
+        composingFlickKana = ""
     }
 
     // Symbol candidate state: when non-null, tapping a candidate replaces the last committed symbol
@@ -868,6 +875,98 @@ class InputEngine(private val service: NacreInputMethodService) {
                 repeat(kotlin.math.abs(dy)) {
                     sendKeyEvent(if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
                 }
+            }
+        }
+    }
+
+    /**
+     * Direct kana input from flick keyboard.
+     * Bypasses JapaneseEngine romaji — appends kana directly.
+     */
+    fun processFlickKana(kana: String) {
+        val ic = service.currentInputConnection ?: return
+        if (isConverting) commitSelectedCandidate(ic)
+
+        composingFlickKana += kana
+        composingKana = composingFlickKana
+        ic.setComposingText(composingFlickKana, 1)
+        updatePredictions(composingFlickKana)
+    }
+
+    fun processFlickDakuten(type: DakutenType) {
+        if (composingFlickKana.isEmpty()) return
+        val ic = service.currentInputConnection ?: return
+        val lastChar = composingFlickKana.last()
+        val replaced = when (type) {
+            DakutenType.Dakuten -> FlickEngine.applyDakuten(lastChar)
+            DakutenType.Handakuten -> FlickEngine.applyHandakuten(lastChar)
+            DakutenType.Small -> FlickEngine.applySmall(lastChar)
+        } ?: return
+
+        composingFlickKana = composingFlickKana.dropLast(1) + replaced
+        composingKana = composingFlickKana
+        ic.setComposingText(composingFlickKana, 1)
+        updatePredictions(composingFlickKana)
+    }
+
+    /**
+     * Flick-mode conversion. Uses composingFlickKana directly (no romaji).
+     */
+    private fun startFlickConversion(ic: android.view.inputmethod.InputConnection) {
+        val kana = composingFlickKana
+        val dict = dictionary
+        if (dict != null) {
+            val results = dict.convert(kana)
+            if (results.isNotEmpty()) {
+                fullKana = kana
+                segmentBoundary = kana.length
+                candidates.clear()
+                candidates.addAll(results)
+                selectedCandidateIndex = 0
+                isConverting = true
+                ic.setComposingText(results[0].surface, 1)
+                return
+            }
+        }
+        // No results: commit as kana
+        ic.commitText(kana, 1)
+        composingFlickKana = ""
+        composingKana = ""
+        clearCandidates()
+    }
+
+    fun processFlickBackspace() {
+        val ic = service.currentInputConnection ?: return
+        if (isConverting) {
+            cancelConversion(ic)
+        } else if (composingFlickKana.isNotEmpty()) {
+            composingFlickKana = composingFlickKana.dropLast(1)
+            composingKana = composingFlickKana
+            if (composingFlickKana.isEmpty()) {
+                ic.finishComposingText()
+                clearCandidates()
+            } else {
+                ic.setComposingText(composingFlickKana, 1)
+                updatePredictions(composingFlickKana)
+            }
+        } else {
+            ic.deleteSurroundingText(1, 0)
+        }
+    }
+
+    /**
+     * Commit any active flick composition (called when switching away from flick layout).
+     */
+    fun commitFlickIfNeeded() {
+        if (composingFlickKana.isNotEmpty()) {
+            val ic = service.currentInputConnection ?: return
+            if (isConverting) {
+                commitSelectedCandidate(ic)
+            } else {
+                ic.commitText(composingFlickKana, 1)
+                composingFlickKana = ""
+                composingKana = ""
+                clearCandidates()
             }
         }
     }

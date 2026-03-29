@@ -198,6 +198,10 @@ fun KeyView(
                                     } else if (keyDef.action is KeyAction.SwitchIme) {
                                         // GL long press: open emoji panel
                                         service.inputEngine.processAction(KeyAction.Emoji)
+                                    } else if (keyDef.action is KeyAction.Space) {
+                                        // Space long press: start voice input
+                                        val lang = if (service.layerManager.isJapanese) "ja-JP" else "en-US"
+                                        service.voiceInputManager.startListening(lang)
                                     } else if (keyDef.longPress != null) {
                                         // SPEC: Gboard-style popup bubble for long-press character
                                         longPressChar = keyDef.longPress!!
