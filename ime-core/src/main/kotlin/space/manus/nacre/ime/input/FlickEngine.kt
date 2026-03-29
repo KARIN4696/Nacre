@@ -1,0 +1,105 @@
+package space.manus.nacre.ime.input
+
+/**
+ * Maps 12-key flick directions to kana characters.
+ * Also handles dakuten, handakuten, and small kana transformations.
+ */
+object FlickEngine {
+
+    enum class Direction { Tap, Left, Up, Right, Down }
+
+    data class FlickKey(
+        val id: String,
+        val label: String,
+        val tap: String,
+        val left: String? = null,
+        val up: String? = null,
+        val right: String? = null,
+        val down: String? = null,
+    )
+
+    val kanaKeys: List<FlickKey> = listOf(
+        FlickKey("あ", "あ", "あ", "い", "う", "え", "お"),
+        FlickKey("か", "か", "か", "き", "く", "け", "こ"),
+        FlickKey("さ", "さ", "さ", "し", "す", "せ", "そ"),
+        FlickKey("た", "た", "た", "ち", "つ", "て", "と"),
+        FlickKey("な", "な", "な", "に", "ぬ", "ね", "の"),
+        FlickKey("は", "は", "は", "ひ", "ふ", "へ", "ほ"),
+        FlickKey("ま", "ま", "ま", "み", "む", "め", "も"),
+        FlickKey("や", "や", "や", "（", "ゆ", "）", "よ"),
+        FlickKey("ら", "ら", "ら", "り", "る", "れ", "ろ"),
+        FlickKey("わ", "わ", "わ", "を", "ん", "ー", "〜"),
+    )
+
+    data class SymbolFlickKey(
+        val id: String,
+        val tap: String,
+        val left: String? = null,
+        val up: String? = null,
+        val right: String? = null,
+        val down: String? = null,
+    )
+
+    val symbolKeys: List<SymbolFlickKey> = listOf(
+        SymbolFlickKey("@", "@", "#", "$"),
+        SymbolFlickKey("%", "%", "&", "*"),
+        SymbolFlickKey("-", "-", "+", "="),
+        SymbolFlickKey("(", "(", ")", "[", "]"),
+        SymbolFlickKey("{", "{", "}", "<", ">"),
+        SymbolFlickKey("/", "/", "\\", "|"),
+        SymbolFlickKey("!", "!", "?", "."),
+        SymbolFlickKey(":", ":", ";", ","),
+        SymbolFlickKey("'", "'", "\"", "`"),
+        SymbolFlickKey("~", "~", "^", "_"),
+        SymbolFlickKey("「", "「", "」", "『", "』"),
+    )
+
+    fun resolveFlick(key: FlickKey, direction: Direction): String? = when (direction) {
+        Direction.Tap -> key.tap
+        Direction.Left -> key.left
+        Direction.Up -> key.up
+        Direction.Right -> key.right
+        Direction.Down -> key.down
+    }
+
+    fun resolveSymbolFlick(key: SymbolFlickKey, direction: Direction): String? = when (direction) {
+        Direction.Tap -> key.tap
+        Direction.Left -> key.left
+        Direction.Up -> key.up
+        Direction.Right -> key.right
+        Direction.Down -> key.down
+    }
+
+    private val dakutenMap = mapOf(
+        'か' to 'が', 'き' to 'ぎ', 'く' to 'ぐ', 'け' to 'げ', 'こ' to 'ご',
+        'さ' to 'ざ', 'し' to 'じ', 'す' to 'ず', 'せ' to 'ぜ', 'そ' to 'ぞ',
+        'た' to 'だ', 'ち' to 'ぢ', 'つ' to 'づ', 'て' to 'で', 'と' to 'ど',
+        'は' to 'ば', 'ひ' to 'び', 'ふ' to 'ぶ', 'へ' to 'べ', 'ほ' to 'ぼ',
+        'う' to 'ゔ',
+    )
+
+    private val handakutenMap = mapOf(
+        'は' to 'ぱ', 'ひ' to 'ぴ', 'ふ' to 'ぷ', 'へ' to 'ぺ', 'ほ' to 'ぽ',
+    )
+
+    private val smallMap = mapOf(
+        'つ' to 'っ', 'や' to 'ゃ', 'ゆ' to 'ゅ', 'よ' to 'ょ',
+        'あ' to 'ぁ', 'い' to 'ぃ', 'う' to 'ぅ', 'え' to 'ぇ', 'お' to 'ぉ',
+        'わ' to 'ゎ',
+    )
+
+    private val reverseDakuten = dakutenMap.entries.associate { (k, v) -> v to k }
+    private val reverseHandakuten = handakutenMap.entries.associate { (k, v) -> v to k }
+    private val reverseSmall = smallMap.entries.associate { (k, v) -> v to k }
+
+    fun applyDakuten(lastKana: Char): Char? =
+        dakutenMap[lastKana] ?: reverseDakuten[lastKana]
+
+    fun applyHandakuten(lastKana: Char): Char? =
+        handakutenMap[lastKana] ?: reverseHandakuten[lastKana]
+
+    fun applySmall(lastKana: Char): Char? =
+        smallMap[lastKana] ?: reverseSmall[lastKana]
+}
+
+enum class DakutenType { Dakuten, Handakuten, Small }
