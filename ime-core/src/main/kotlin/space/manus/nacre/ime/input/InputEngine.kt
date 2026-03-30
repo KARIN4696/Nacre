@@ -351,10 +351,15 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             is KeyAction.Enter -> {
                 if (symbolReplace != null) {
-                    // Symbol candidates showing (e.g. after 、。) — just dismiss
                     clearCandidates()
                 } else if (isConverting) {
                     commitSelectedCandidate(ic)
+                } else if (composingFlickKana.isNotEmpty()) {
+                    // Flick mode: commit kana as-is
+                    ic.commitText(composingFlickKana, 1)
+                    composingFlickKana = ""
+                    composingKana = ""
+                    clearCandidates()
                 } else if (composingText.isNotEmpty()) {
                     finishComposing(ic)
                 } else if (englishComposing.isNotEmpty()) {
@@ -385,7 +390,14 @@ class InputEngine(private val service: NacreInputMethodService) {
                     service.layerManager.resetToBase()
                     return
                 }
-                if (composingText.isNotEmpty()) {
+                // Flick mode: space triggers conversion or commits + space
+                if (composingFlickKana.isNotEmpty()) {
+                    if (isConverting) {
+                        nextCandidate(ic)
+                    } else {
+                        startFlickConversion(ic)
+                    }
+                } else if (composingText.isNotEmpty()) {
                     if (isConverting) {
                         // Cycle to next candidate
                         nextCandidate(ic)
@@ -422,9 +434,14 @@ class InputEngine(private val service: NacreInputMethodService) {
             is KeyAction.Escape -> {
                 if (isConverting) {
                     cancelConversion(ic)
+                } else if (composingFlickKana.isNotEmpty()) {
+                    composingFlickKana = ""
+                    composingKana = ""
+                    ic.finishComposingText()
+                    clearCandidates()
                 } else if (composingText.isNotEmpty()) {
                     composingText = ""
-        composingKana = ""
+                    composingKana = ""
                     ic.finishComposingText()
                     clearCandidates()
                 } else {
@@ -443,6 +460,11 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             is KeyAction.ToggleJapanese -> {
                 if (isConverting) commitSelectedCandidate(ic)
+                if (composingFlickKana.isNotEmpty()) {
+                    ic.commitText(composingFlickKana, 1)
+                    composingFlickKana = ""
+                    composingKana = ""
+                }
                 if (composingText.isNotEmpty()) finishComposing(ic)
                 if (englishComposing.isNotEmpty()) {
                     ic.commitText(englishComposing, 1)
@@ -455,12 +477,14 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             is KeyAction.Emoji -> {
                 if (isConverting) commitSelectedCandidate(ic)
+                if (composingFlickKana.isNotEmpty()) commitFlickIfNeeded()
                 if (composingText.isNotEmpty()) finishComposing(ic)
                 service.layerManager.isEmojiRequested = true
             }
 
             is KeyAction.Symbols -> {
                 if (isConverting) commitSelectedCandidate(ic)
+                if (composingFlickKana.isNotEmpty()) commitFlickIfNeeded()
                 if (composingText.isNotEmpty()) finishComposing(ic)
                 service.layerManager.isSymbolsRequested = true
             }
@@ -767,6 +791,8 @@ class InputEngine(private val service: NacreInputMethodService) {
         isConverting = false
         symbolReplace = null
         composingFlickKana = ""
+        lastFlickKeyId = ""
+        lastFlickTapTime = 0L
     }
 
     // Symbol candidate state: when non-null, tapping a candidate replaces the last committed symbol
