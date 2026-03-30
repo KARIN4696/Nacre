@@ -59,8 +59,7 @@ fun FlickInputPad(service: NacreInputMethodService) {
             .fillMaxWidth()
             .background(bgColor),
     ) {
-        // TODO: Replace with ToolbarOrCandidateBar(service = service) once Toolbar.kt is added
-        CandidateBar(service = service)
+        ToolbarOrCandidateBar(service = service)
 
         // Tab bar: あ / 123 / #+ / 😊
         FlickTabBar(
