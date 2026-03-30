@@ -109,8 +109,8 @@ private fun StandardKeyboardScreen(service: NacreInputMethodService) {
             .background(bgColor)
             .padding(horizontal = 4.dp, vertical = 1.dp),
     ) {
-        // Candidate bar (prediction/conversion) — or toolbar when no composing input
-        ToolbarOrCandidateBar(service = service)
+        // Candidate bar (prediction/conversion)
+        CandidateBar(service = service)
 
         // Status bar: layer + Japanese mode + shift + voice indicators
         StatusBar(service = service, layerManager = layerManager, accentColor = accentColor)
@@ -121,7 +121,7 @@ private fun StandardKeyboardScreen(service: NacreInputMethodService) {
             val isModRow = rowIndex == rows.lastIndex
             val keyHeight = if (isModRow) 26f else if (isLargeScreen) 34f else 40f
 
-            if (rowIndex == 2 || rowIndex == 3) {
+            if (rowIndex == 2) {
                 KeyRowWithTrackball(
                     keys = row,
                     service = service,

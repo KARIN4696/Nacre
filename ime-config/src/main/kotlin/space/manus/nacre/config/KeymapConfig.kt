@@ -69,17 +69,16 @@ object DefaultLayouts {
                 key(".", swipeUp = "！", swipeDown = "。"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: [Shift ↑ ↓ Fn] | gap | [Space Alt Enter あ/A]  (4+4)
+            // Row 4: Shift ↑ ↓ Fn Space Alt Enter
             listOf(
                 KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
                 KeyDef("↓", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.8f),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2.5f,
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.8f),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                KeyDef("あ", label = "あ", action = KeyAction.ToggleJapanese, widthMultiplier = 0.7f),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
     )
@@ -108,7 +107,7 @@ object DefaultLayouts {
                 key("~"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: [Shift ↑ ↓ Fn2] | gap | [Space Alt Enter あ/A]  (4+4)
+            // Row 4: Shift ↑ ↓ Fn2 Space Alt Enter
             listOf(
                 KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
@@ -117,8 +116,7 @@ object DefaultLayouts {
                 KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2.5f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.8f),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                KeyDef("あ", label = "あ", action = KeyAction.ToggleJapanese, widthMultiplier = 0.7f),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
     )
@@ -155,17 +153,16 @@ object DefaultLayouts {
                 key("_"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: [Shift ↑ ↓ Fn] | gap | [Space Alt Enter あ/A]  (4+4)
+            // Row 4: Shift ↑ ↓ Fn Space Alt Enter
             listOf(
                 KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
                 KeyDef("↓", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.8f),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2.5f,
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.8f),
-                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
-                KeyDef("あ", label = "あ", action = KeyAction.ToggleJapanese, widthMultiplier = 0.7f),
+                KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
             ),
         ),
     )
