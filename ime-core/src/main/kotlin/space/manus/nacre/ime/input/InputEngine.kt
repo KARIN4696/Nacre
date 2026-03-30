@@ -361,12 +361,12 @@ class InputEngine(private val service: NacreInputMethodService) {
                     englishComposing = ""
                     clearCandidates()
                 } else {
-                    // Use performEditorAction for Search/Send/Go fields
+                    // Gboard-compatible Enter handling:
+                    // If the editor declares an action (Send/Search/Go/Done/Next),
+                    // perform that action. Otherwise send KEYCODE_ENTER for newline.
                     val imeAction = editorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
-                    if (imeAction == EditorInfo.IME_ACTION_SEARCH ||
-                        imeAction == EditorInfo.IME_ACTION_SEND ||
-                        imeAction == EditorInfo.IME_ACTION_GO ||
-                        imeAction == EditorInfo.IME_ACTION_DONE
+                    if (imeAction != EditorInfo.IME_ACTION_NONE &&
+                        imeAction != EditorInfo.IME_ACTION_UNSPECIFIED
                     ) {
                         ic.performEditorAction(imeAction)
                     } else {
