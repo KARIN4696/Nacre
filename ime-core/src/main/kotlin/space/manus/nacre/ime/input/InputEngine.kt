@@ -370,15 +370,30 @@ class InputEngine(private val service: NacreInputMethodService) {
                     clearCandidates()
                 } else {
                     // Gboard-compatible Enter handling:
-                    // If the editor declares an action (Send/Search/Go/Done/Next),
-                    // perform that action. Otherwise send KEYCODE_ENTER for newline.
-                    val imeAction = editorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: 0
-                    if (imeAction != EditorInfo.IME_ACTION_NONE &&
-                        imeAction != EditorInfo.IME_ACTION_UNSPECIFIED
-                    ) {
-                        ic.performEditorAction(imeAction)
-                    } else {
+                    // 1. If IME_FLAG_NO_ENTER_ACTION is set → always newline
+                    // 2. If editor declares a specific action (Send/Search/Go) → perform it
+                    // 3. IME_ACTION_DONE → perform it (closes keyboard or submits)
+                    // 4. IME_ACTION_NEXT → perform it (move to next field)
+                    // 5. IME_ACTION_NONE / UNSPECIFIED / null → newline
+                    val opts = editorInfo?.imeOptions ?: 0
+                    val imeAction = opts and EditorInfo.IME_MASK_ACTION
+                    val noEnterAction = opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION != 0
+
+                    if (noEnterAction) {
+                        // Multi-line field with NO_ENTER_ACTION → always newline
                         sendKeyEvent(KeyEvent.KEYCODE_ENTER)
+                    } else when (imeAction) {
+                        EditorInfo.IME_ACTION_SEND,
+                        EditorInfo.IME_ACTION_SEARCH,
+                        EditorInfo.IME_ACTION_GO,
+                        EditorInfo.IME_ACTION_DONE,
+                        EditorInfo.IME_ACTION_NEXT -> {
+                            ic.performEditorAction(imeAction)
+                        }
+                        else -> {
+                            // IME_ACTION_NONE, IME_ACTION_UNSPECIFIED, or unknown → newline
+                            sendKeyEvent(KeyEvent.KEYCODE_ENTER)
+                        }
                     }
                 }
             }
