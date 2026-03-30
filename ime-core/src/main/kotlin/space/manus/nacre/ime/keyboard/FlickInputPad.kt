@@ -167,7 +167,7 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
 
     // Side key definitions: (label, KeyDef) per row × side (left/right)
     val sideKeySizeWeight = 0.8f
-    val enterSizeWeight = 1.2f
+    val enterSizeWeight = 1.0f
 
     // Row 1 side keys
     val row1Left  = KeyDef("↩", action = KeyAction.Escape, widthMultiplier = sideKeySizeWeight)
@@ -197,7 +197,7 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // Row 1: ↩ | あ | か | さ | ⌫
         Row(
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             KeyView(keyDef = row1Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 0, column = 0)
@@ -208,7 +208,7 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
         }
         // Row 2: ◀ | た | な | は | ▶
         Row(
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             KeyView(keyDef = row2Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 1, column = 0)
@@ -219,7 +219,7 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
         }
         // Row 3: ☺記 | ま | や | ら | ␣
         Row(
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             KeyView(keyDef = row3Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 2, column = 0)
@@ -230,7 +230,7 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
         }
         // Row 4: あa1 | ゛゜小 | わ | ？。！ | ↵
         Row(
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             KeyView(keyDef = row4Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 3, column = 0)
@@ -288,7 +288,7 @@ private fun FlickKeyView(
     }
 
     val shape = RoundedCornerShape(6.dp)
-    val flickThresholdPx = with(LocalDensity.current) { 16.dp.toPx() }
+    val flickThresholdPx = with(LocalDensity.current) { 10.dp.toPx() }
 
     Box(
         modifier = modifier
@@ -475,7 +475,7 @@ private fun DakutenKeyView(
     }
 
     val shape = RoundedCornerShape(6.dp)
-    val flickThresholdPx = with(LocalDensity.current) { 16.dp.toPx() }
+    val flickThresholdPx = with(LocalDensity.current) { 10.dp.toPx() }
 
     Box(
         modifier = modifier
@@ -771,5 +771,5 @@ private fun FlickBottomRow(service: NacreInputMethodService) {
         KeyDef("変換", action = KeyAction.Henkan),
         KeyDef("Alt", action = KeyAction.Alt),
     )
-    KeyRow(keys = keys, service = service, rowIndex = 4, keyHeightDp = 40f)
+    KeyRow(keys = keys, service = service, rowIndex = 4, keyHeightDp = 28f)
 }
