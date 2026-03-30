@@ -513,7 +513,7 @@ class InputEngine(private val service: NacreInputMethodService) {
 
             // Clear composing text first to avoid double input
             // (commitText auto-finishes composing, causing composing + candidate duplication)
-            if (composingText.isNotEmpty() || englishComposing.isNotEmpty()) {
+            if (composingText.isNotEmpty() || englishComposing.isNotEmpty() || composingFlickKana.isNotEmpty()) {
                 ic.setComposingText("", 0)
             }
             ic.finishComposingText()
