@@ -182,16 +182,16 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
     val row4Left  = KeyDef("あa1", action = KeyAction.ToggleJapanese, widthMultiplier = sideKeySizeWeight)
     val row4Right = KeyDef("↵", action = KeyAction.Enter, widthMultiplier = enterSizeWeight)
 
-    // Punctuation flick key for row 4, col 3 (？。！)
-    // Tap = 。  Up = ？  Down = ！  Left = 、  Right = …
+    // Punctuation flick key for row 4, col 3
+    // Tap = 。  Left = 、  Up = ？  Right = ！  Down = …
     val punctKey = FlickEngine.FlickKey(
         id = "punct",
-        label = "？。！",
+        label = "、。",
         tap = "。",
         left = "、",
         up = "？",
-        right = "…",
-        down = "！",
+        right = "！",
+        down = "…",
     )
 
     Column(modifier = Modifier.fillMaxWidth()) {

@@ -27,9 +27,11 @@ import space.manus.nacre.ime.NacreInputMethodService
 @Composable
 fun ToolbarOrCandidateBar(service: NacreInputMethodService) {
     val composingKana = service.inputEngine.composingKana
-    val candidates = service.inputEngine.candidates
+    val isConverting = service.inputEngine.isConverting
 
-    if (composingKana.isNotEmpty() || candidates.isNotEmpty()) {
+    // Show candidate bar only when actively composing or converting.
+    // Next-word predictions (candidates present but no composing) show toolbar instead.
+    if (composingKana.isNotEmpty() || isConverting) {
         CandidateBar(service = service)
     } else {
         Toolbar(service = service)

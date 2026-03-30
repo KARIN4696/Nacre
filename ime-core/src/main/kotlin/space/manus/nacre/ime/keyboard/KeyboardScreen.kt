@@ -121,7 +121,7 @@ private fun StandardKeyboardScreen(service: NacreInputMethodService) {
             val isModRow = rowIndex == rows.lastIndex
             val keyHeight = if (isModRow) 26f else if (isLargeScreen) 34f else 40f
 
-            if (rowIndex == 2) {
+            if (rowIndex == 2 || rowIndex == 3) {
                 KeyRowWithTrackball(
                     keys = row,
                     service = service,
