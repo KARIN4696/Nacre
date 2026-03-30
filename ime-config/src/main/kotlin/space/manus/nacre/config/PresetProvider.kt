@@ -20,10 +20,10 @@ object PresetProvider {
     // ---- shared modifier row (Row 4) used by all presets ----
 
     private val modifierRow = listOf(
+        KeyDef("Shift", action = KeyAction.Shift),
         KeyDef("▲", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
         KeyDef("▼", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
         KeyDef("Fn", action = KeyAction.Fn),
-        KeyDef("\u21E7", action = KeyAction.Shift),
         KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 1.5f,
             swipeUp = "Tab", swipeLeft = "\u30FC"),
         KeyDef("Alt", action = KeyAction.Alt),
@@ -180,11 +180,11 @@ object PresetProvider {
             ),
             // Row 4: Ctrl + modifiers
             listOf(
+                KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("▲", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
                 KeyDef("▼", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT)),
                 KeyDef("Fn", action = KeyAction.Fn),
-                KeyDef("\u21E7", action = KeyAction.Shift),
                 KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 1.5f,
                     swipeUp = "Tab", swipeLeft = "\u30FC"),
                 KeyDef("Alt", action = KeyAction.Alt),

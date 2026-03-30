@@ -69,12 +69,12 @@ object DefaultLayouts {
                 key(".", swipeUp = "！", swipeDown = "。"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: ▲▼ Fn ⇧ [⎵⎵] Alt [↵↵]
+            // Row 4: Shift ▲▼ Fn [⎵⎵] Alt [↵↵]
             listOf(
+                KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("▲", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
                 KeyDef("▼", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("Fn", action = KeyAction.Fn),
-                KeyDef("⇧", action = KeyAction.Shift),
                 KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt),
@@ -154,10 +154,10 @@ object DefaultLayouts {
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
             listOf(
+                KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("▲", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
                 KeyDef("▼", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
                 KeyDef("Fn", action = KeyAction.Fn),
-                KeyDef("⇧", action = KeyAction.Shift),
                 KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt),
