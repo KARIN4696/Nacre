@@ -273,6 +273,9 @@ private fun FlickKeyView(
     val surfaceColor = Color(theme.surface.toInt())
 
     val lighting = service.keyLighting
+    // Read animationTick to trigger recomposition on lighting updates
+    @Suppress("UNUSED_VARIABLE")
+    val tick = lighting.animationTick
     val lightingColor = lighting.getKeyColor(flickKey.id, row, column)
 
     val glowAlpha by animateFloatAsState(
@@ -461,6 +464,8 @@ private fun DakutenKeyView(
     val surfaceColor = Color(theme.surface.toInt())
 
     val lighting = service.keyLighting
+    @Suppress("UNUSED_VARIABLE")
+    val tick2 = lighting.animationTick
     val lightingColor = lighting.getKeyColor("゛", row, column)
 
     val glowAlpha by animateFloatAsState(
@@ -645,6 +650,8 @@ private fun FlickModKeyView(
     val surfaceColor = Color(theme.surface.toInt())
 
     val lighting = service.keyLighting
+    @Suppress("UNUSED_VARIABLE")
+    val tick3 = lighting.animationTick
     val lightingColor = lighting.getKeyColor(label, row, column)
 
     val glowAlpha by animateFloatAsState(
