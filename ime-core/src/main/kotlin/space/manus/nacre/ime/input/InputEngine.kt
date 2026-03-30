@@ -476,6 +476,11 @@ class InputEngine(private val service: NacreInputMethodService) {
             }
 
             is KeyAction.KeyCode -> {
+                // In flick mode, ▶ (DPAD_RIGHT) confirms current toggle input
+                if (action.code == KeyEvent.KEYCODE_DPAD_RIGHT && lastFlickKeyId.isNotEmpty()) {
+                    confirmFlickToggle()
+                    return
+                }
                 val now = System.currentTimeMillis()
                 var meta = 0
                 if (action.ctrl) meta = meta or KeyEvent.META_CTRL_ON
@@ -921,6 +926,12 @@ class InputEngine(private val service: NacreInputMethodService) {
             }
         }
 
+        // Reset toggle state when switching to a different key
+        if (isFlickTap && flickKeyId != lastFlickKeyId) {
+            lastFlickKeyId = ""
+            lastFlickTapTime = 0L
+        }
+
         // Normal input (flick or first tap)
         composingFlickKana += kana
         composingKana = composingFlickKana
@@ -936,12 +947,32 @@ class InputEngine(private val service: NacreInputMethodService) {
         }
     }
 
+    /**
+     * Confirm current toggle input position (called by ▶ key in 12-key mode).
+     * Resets the toggle state so the next tap on the same key starts a new character.
+     */
+    fun confirmFlickToggle() {
+        lastFlickKeyId = ""
+        lastFlickTapTime = 0L
+    }
+
+    /**
+     * Apply dakuten/handakuten/small to the last kana.
+     * When type is Dakuten (tap), cycles: base → dakuten → handakuten → small → base
+     * e.g. は→ば→ぱ→は, つ→づ→っ→つ
+     */
     fun processFlickDakuten(type: DakutenType) {
         if (composingFlickKana.isEmpty()) return
         val ic = service.currentInputConnection ?: return
         val lastChar = composingFlickKana.last()
+
         val replaced = when (type) {
-            DakutenType.Dakuten -> FlickEngine.applyDakuten(lastChar)
+            DakutenType.Dakuten -> {
+                // Tap: cycle through dakuten → handakuten → small → base
+                FlickEngine.applyDakuten(lastChar)
+                    ?: FlickEngine.applyHandakuten(lastChar)
+                    ?: FlickEngine.applySmall(lastChar)
+            }
             DakutenType.Handakuten -> FlickEngine.applyHandakuten(lastChar)
             DakutenType.Small -> FlickEngine.applySmall(lastChar)
         } ?: return
