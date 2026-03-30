@@ -59,7 +59,7 @@ fun FlickInputPad(service: NacreInputMethodService) {
             .fillMaxWidth()
             .background(bgColor),
     ) {
-        // Candidate bar
+        // TODO: Replace with ToolbarOrCandidateBar(service = service) once Toolbar.kt is added
         CandidateBar(service = service)
 
         // Tab bar: あ / 123 / #+ / 😊
@@ -148,74 +148,97 @@ private fun FlickTabBar(
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Kana 4×3 grid
+// Kana 4×5 Gboard-style grid
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * 4-row × 3-column grid of flick keys.
- * Layout (row-major, phone numpad order):
- *   あ  か  さ
- *   た  な  は
- *   ま  や  ら
- *   ゛゜小  わ  ⌫
+ * 4-row × 5-column Gboard-style grid of flick keys.
+ * Side columns (0 and 4) contain function keys at 0.8× width.
+ * Centre columns (1-3) contain the standard kana keys.
+ *
+ * Layout:
+ *   [↩(0.8x)]  [あ]  [か]  [さ]  [⌫(0.8x)]
+ *   [◀(0.8x)]  [た]  [な]  [は]  [▶(0.8x)]
+ *   [☺記(0.8x)] [ま]  [や]  [ら]  [␣(0.8x)]
+ *   [あa1(0.8x)] [゛゜] [わ] [？。！] [↵(1.2x)]
  */
 @Composable
 private fun FlickKanaGrid(service: NacreInputMethodService) {
     val kanaKeys = FlickEngine.kanaKeys // 10 keys: あかさたなはまやらわ
 
-    // Rows: indices into kanaKeys
-    val rows = listOf(
-        listOf(0, 1, 2), // あ か さ
-        listOf(3, 4, 5), // た な は
-        listOf(6, 7, 8), // ま や ら
+    // Side key definitions: (label, KeyDef) per row × side (left/right)
+    val sideKeySizeWeight = 0.8f
+    val enterSizeWeight = 1.2f
+
+    // Row 1 side keys
+    val row1Left  = KeyDef("↩", action = KeyAction.Escape, widthMultiplier = sideKeySizeWeight)
+    val row1Right = KeyDef("⌫", action = KeyAction.Backspace, widthMultiplier = sideKeySizeWeight)
+    // Row 2 side keys
+    val row2Left  = KeyDef("◀", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_LEFT), widthMultiplier = sideKeySizeWeight)
+    val row2Right = KeyDef("▶", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_RIGHT), widthMultiplier = sideKeySizeWeight)
+    // Row 3 side keys
+    val row3Left  = KeyDef("☺記", action = KeyAction.Emoji, widthMultiplier = sideKeySizeWeight)
+    val row3Right = KeyDef("␣", action = KeyAction.Space, widthMultiplier = sideKeySizeWeight)
+    // Row 4 side keys
+    val row4Left  = KeyDef("あa1", action = KeyAction.ToggleJapanese, widthMultiplier = sideKeySizeWeight)
+    val row4Right = KeyDef("↵", action = KeyAction.Enter, widthMultiplier = enterSizeWeight)
+
+    // Punctuation flick key for row 4, col 3 (？。！)
+    // Tap = 。  Up = ？  Down = ！  Left = 、  Right = …
+    val punctKey = FlickEngine.FlickKey(
+        id = "punct",
+        label = "？。！",
+        tap = "。",
+        left = "、",
+        up = "？",
+        right = "…",
+        down = "！",
     )
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        rows.forEachIndexed { rowIndex, cols ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                cols.forEachIndexed { colIndex, keyIndex ->
-                    FlickKeyView(
-                        flickKey = kanaKeys[keyIndex],
-                        service = service,
-                        modifier = Modifier.weight(1f),
-                        row = rowIndex,
-                        column = colIndex,
-                    )
-                }
-            }
-        }
-        // Bottom row of grid: ゛゜小 | わ(index 9) | ⌫
+        // Row 1: ↩ | あ | か | さ | ⌫
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
+            modifier = Modifier.fillMaxWidth().height(56.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            DakutenKeyView(
-                service = service,
-                modifier = Modifier.weight(1f),
-                row = 3,
-                column = 0,
-            )
-            FlickKeyView(
-                flickKey = kanaKeys[9], // わ
-                service = service,
-                modifier = Modifier.weight(1f),
-                row = 3,
-                column = 1,
-            )
-            FlickModKeyView(
-                label = "⌫",
-                service = service,
-                modifier = Modifier.weight(1f),
-                row = 3,
-                column = 2,
-            )
+            KeyView(keyDef = row1Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 0, column = 0)
+            FlickKeyView(flickKey = kanaKeys[0], service = service, modifier = Modifier.weight(1f), row = 0, column = 1) // あ
+            FlickKeyView(flickKey = kanaKeys[1], service = service, modifier = Modifier.weight(1f), row = 0, column = 2) // か
+            FlickKeyView(flickKey = kanaKeys[2], service = service, modifier = Modifier.weight(1f), row = 0, column = 3) // さ
+            KeyView(keyDef = row1Right, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 0, column = 4)
+        }
+        // Row 2: ◀ | た | な | は | ▶
+        Row(
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            KeyView(keyDef = row2Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 1, column = 0)
+            FlickKeyView(flickKey = kanaKeys[3], service = service, modifier = Modifier.weight(1f), row = 1, column = 1) // た
+            FlickKeyView(flickKey = kanaKeys[4], service = service, modifier = Modifier.weight(1f), row = 1, column = 2) // な
+            FlickKeyView(flickKey = kanaKeys[5], service = service, modifier = Modifier.weight(1f), row = 1, column = 3) // は
+            KeyView(keyDef = row2Right, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 1, column = 4)
+        }
+        // Row 3: ☺記 | ま | や | ら | ␣
+        Row(
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            KeyView(keyDef = row3Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 2, column = 0)
+            FlickKeyView(flickKey = kanaKeys[6], service = service, modifier = Modifier.weight(1f), row = 2, column = 1) // ま
+            FlickKeyView(flickKey = kanaKeys[7], service = service, modifier = Modifier.weight(1f), row = 2, column = 2) // や
+            FlickKeyView(flickKey = kanaKeys[8], service = service, modifier = Modifier.weight(1f), row = 2, column = 3) // ら
+            KeyView(keyDef = row3Right, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 2, column = 4)
+        }
+        // Row 4: あa1 | ゛゜小 | わ | ？。！ | ↵
+        Row(
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            KeyView(keyDef = row4Left, service = service, modifier = Modifier.weight(sideKeySizeWeight), row = 3, column = 0)
+            DakutenKeyView(service = service, modifier = Modifier.weight(1f), row = 3, column = 1)
+            FlickKeyView(flickKey = kanaKeys[9], service = service, modifier = Modifier.weight(1f), row = 3, column = 2) // わ
+            FlickKeyView(flickKey = punctKey, service = service, modifier = Modifier.weight(1f), row = 3, column = 3) // ？。！
+            KeyView(keyDef = row4Right, service = service, modifier = Modifier.weight(enterSizeWeight), row = 3, column = 4)
         }
     }
 }
@@ -729,33 +752,25 @@ private fun FlickModKeyView(
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Bottom row: [▲][▼] | [Space] | [変換] | [Alt] | [Enter]
- * Uses existing KeyRow / KeyView for consistent styling.
+ * Bottom row: [↑(0.5x)] [↓(0.5x)] | [変換] | [Alt]
+ * Enter has moved into the kana grid (row 4, right side key).
+ * Space is the ␣ side key in row 3 of the grid.
  */
 @Composable
 private fun FlickBottomRow(service: NacreInputMethodService) {
     val keys = listOf(
         KeyDef(
-            "▲",
+            "↑",
             action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP),
             widthMultiplier = 0.5f,
         ),
         KeyDef(
-            "▼",
+            "↓",
             action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN),
             widthMultiplier = 0.5f,
         ),
-        KeyDef(
-            " ",
-            label = "⎵",
-            action = KeyAction.Space,
-            widthMultiplier = 2f,
-            swipeLeft = "ToggleJa",
-            swipeRight = "ToggleJa",
-        ),
         KeyDef("変換", action = KeyAction.Henkan),
         KeyDef("Alt", action = KeyAction.Alt),
-        KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.5f),
     )
     KeyRow(keys = keys, service = service, rowIndex = 4, keyHeightDp = 40f)
 }
