@@ -23,11 +23,10 @@ object PresetProvider {
     private val modifierRow = listOf(
         KeyDef("Shift", action = KeyAction.Shift),
         KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-        KeyDef("↓", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
-        KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.8f),
-        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
+        KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.7f),
+        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2.5f,
             swipeUp = "Tab", swipeLeft = "\u30FC"),
-        KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.8f),
+        KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
         KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),
     )
 
@@ -181,11 +180,10 @@ object PresetProvider {
             listOf(
                 KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-                KeyDef("↓", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
-                KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT), widthMultiplier = 0.8f),
-                KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
+                KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT), widthMultiplier = 0.7f),
+                KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2.5f,
                     swipeUp = "Tab", swipeLeft = "\u30FC"),
-                KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.8f),
+                KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
                 KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),
             ),
         ),

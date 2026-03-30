@@ -183,12 +183,12 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
     val row4Right = KeyDef("↵", action = KeyAction.Enter, widthMultiplier = enterSizeWeight)
 
     // Punctuation flick key for row 4, col 3
-    // Tap = 。  Left = 、  Up = ？  Right = ！  Down = …
+    // Tap cycles: 、→。→！→？  Flick for direct access
     val punctKey = FlickEngine.FlickKey(
         id = "punct",
         label = "、。",
-        tap = "。",
-        left = "、",
+        tap = "、",
+        left = "。",
         up = "？",
         right = "！",
         down = "…",
@@ -292,7 +292,7 @@ private fun FlickKeyView(
 
     Box(
         modifier = modifier
-            .padding(horizontal = 2.dp, vertical = 1.5.dp)
+            .padding(horizontal = 1.dp, vertical = 1.dp)
             .scale(scale)
             .clip(shape)
             .background(if (isPressed) keyBgPressed else surfaceColor)
@@ -480,7 +480,7 @@ private fun DakutenKeyView(
 
     Box(
         modifier = modifier
-            .padding(horizontal = 2.dp, vertical = 1.5.dp)
+            .padding(horizontal = 1.dp, vertical = 1.dp)
             .scale(scale)
             .clip(shape)
             .background(if (isPressed) keyBgPressed else surfaceColor)
@@ -507,6 +507,7 @@ private fun DakutenKeyView(
 
                     var totalX = 0f
                     var totalY = 0f
+                    // Gboard style: tap=toggle dakuten/handakuten, up=small, left=handakuten
                     var resolved = DakutenType.Dakuten
 
                     try {
@@ -523,9 +524,9 @@ private fun DakutenKeyView(
 
                                 resolved = when {
                                     abs(totalX) < flickThresholdPx && abs(totalY) < flickThresholdPx ->
-                                        DakutenType.Dakuten
-                                    totalY < 0 -> DakutenType.Handakuten
-                                    totalY > 0 -> DakutenType.Small
+                                        DakutenType.Dakuten // tap = toggle dakuten (が↔か)
+                                    totalY < -flickThresholdPx -> DakutenType.Small // up = small (つ→っ)
+                                    totalX < -flickThresholdPx -> DakutenType.Handakuten // left = handakuten (は→ぱ)
                                     else -> DakutenType.Dakuten
                                 }
                                 popupLabel = when (resolved) {
@@ -662,7 +663,7 @@ private fun FlickModKeyView(
 
     Box(
         modifier = modifier
-            .padding(horizontal = 2.dp, vertical = 1.5.dp)
+            .padding(horizontal = 1.dp, vertical = 1.dp)
             .scale(scale)
             .clip(shape)
             .background(if (isPressed) keyBgPressed else surfaceColor)
