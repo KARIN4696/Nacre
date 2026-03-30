@@ -113,8 +113,8 @@ private fun StandardKeyboardScreen(service: NacreInputMethodService) {
             .background(bgColor)
             .padding(horizontal = 4.dp, vertical = 1.dp),
     ) {
-        // Candidate bar (prediction/conversion)
-        CandidateBar(service = service)
+        // Candidate bar (prediction/conversion) — or toolbar when no composing input
+        ToolbarOrCandidateBar(service = service)
 
         // Status bar: layer + Japanese mode + shift + voice indicators
         StatusBar(service = service, layerManager = layerManager, accentColor = accentColor)

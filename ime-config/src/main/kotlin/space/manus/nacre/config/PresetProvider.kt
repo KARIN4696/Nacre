@@ -19,17 +19,17 @@ object PresetProvider {
 
     // ---- shared modifier row (Row 4) used by all presets ----
 
+    // Row 4 shared: 4+4 split for KeyRowWithTrackball
     private val modifierRow = listOf(
         KeyDef("Shift", action = KeyAction.Shift),
-        KeyDef("▲", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-        KeyDef("▼", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
-        KeyDef("Fn", action = KeyAction.Fn),
+        KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
+        KeyDef("↓", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
+        KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.8f),
         KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 1.5f,
             swipeUp = "Tab", swipeLeft = "\u30FC"),
-        KeyDef("Alt", action = KeyAction.Alt),
-        KeyDef("\uFF1F", label = "\uFF1F", swipeUp = "?", swipeDown = "\uFF01"),
-        KeyDef("\u30FC", label = "\u30FC", swipeUp = "\u301C", swipeDown = "-"),
+        KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.8f),
         KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),
+        KeyDef("GL", action = KeyAction.SwitchIme, widthMultiplier = 0.5f),
     )
 
     // ---- helper ----
@@ -178,18 +178,17 @@ object PresetProvider {
                 key(".", swipeUp = "\uFF01", swipeDown = "\u3002"),
                 KeyDef("\u21B5", action = KeyAction.Enter),
             ),
-            // Row 4: Ctrl + modifiers
+            // Row 4: Ctrl + modifiers (4+4 split for KeyRowWithTrackball)
             listOf(
                 KeyDef("Shift", action = KeyAction.Shift),
-                KeyDef("▲", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-                KeyDef("▼", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
-                KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT)),
-                KeyDef("Fn", action = KeyAction.Fn),
+                KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
+                KeyDef("↓", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.5f),
+                KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT), widthMultiplier = 0.8f),
                 KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 1.5f,
                     swipeUp = "Tab", swipeLeft = "\u30FC"),
-                KeyDef("Alt", action = KeyAction.Alt),
-                KeyDef("\u21B5", action = KeyAction.Enter),
+                KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.8f),
                 KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),
+                KeyDef("GL", action = KeyAction.SwitchIme, widthMultiplier = 0.5f),
             ),
         ),
     )
