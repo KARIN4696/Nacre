@@ -167,7 +167,7 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
 
     // Side key definitions: (label, KeyDef) per row × side (left/right)
     val sideKeySizeWeight = 0.8f
-    val enterSizeWeight = 1.0f
+    val enterSizeWeight = 0.8f
 
     // Row 1 side keys
     val row1Left  = KeyDef("↩", action = KeyAction.Escape, widthMultiplier = sideKeySizeWeight)
@@ -359,7 +359,8 @@ private fun FlickKeyView(
                     // Commit resolved kana
                     val kana = FlickEngine.resolveFlick(flickKey, resolved)
                     if (kana != null) {
-                        service.inputEngine.processFlickKana(kana)
+                        val isTap = resolved == FlickEngine.Direction.Tap
+                        service.inputEngine.processFlickKana(kana, flickKeyId = flickKey.id, isFlickTap = isTap)
                         service.feedbackManager.onKeyPress(KeyAction.Text(kana))
                         lighting.onKeyPress(flickKey.id, column)
                     }

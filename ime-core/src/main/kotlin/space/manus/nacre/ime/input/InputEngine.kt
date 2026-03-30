@@ -318,6 +318,9 @@ class InputEngine(private val service: NacreInputMethodService) {
                 if (isConverting) {
                     // Cancel conversion, go back to kana
                     cancelConversion(ic)
+                } else if (composingFlickKana.isNotEmpty()) {
+                    // Flick mode backspace
+                    processFlickBackspace()
                 } else if (composingText.isNotEmpty()) {
                     // Remove one kana unit worth of romaji
                     composingText = removeLastKanaUnit(composingText)
@@ -879,18 +882,58 @@ class InputEngine(private val service: NacreInputMethodService) {
         }
     }
 
+    // Track last flick tap for toggle input (ガラケー打ち)
+    private var lastFlickKeyId: String = ""
+    private var lastFlickTapTime: Long = 0L
+    private val TOGGLE_TIMEOUT_MS = 800L // Time window for toggle input
+
     /**
      * Direct kana input from flick keyboard.
-     * Bypasses JapaneseEngine romaji — appends kana directly.
+     * Supports toggle input (ガラケー打ち): rapidly tapping the same key
+     * cycles through its kana variants (あ→い→う→え→お→あ...).
      */
-    fun processFlickKana(kana: String) {
+    fun processFlickKana(kana: String, flickKeyId: String = "", isFlickTap: Boolean = false) {
         val ic = service.currentInputConnection ?: return
         if (isConverting) commitSelectedCandidate(ic)
 
+        val now = System.currentTimeMillis()
+
+        // Toggle input: same key tapped again within timeout
+        if (isFlickTap && flickKeyId.isNotEmpty() && flickKeyId == lastFlickKeyId
+            && (now - lastFlickTapTime) < TOGGLE_TIMEOUT_MS
+            && composingFlickKana.isNotEmpty()
+        ) {
+            // Find the FlickKey and cycle through its characters
+            val flickKey = FlickEngine.kanaKeys.find { it.id == flickKeyId }
+            if (flickKey != null) {
+                val cycle = listOfNotNull(flickKey.tap, flickKey.left, flickKey.up, flickKey.right, flickKey.down)
+                val lastChar = composingFlickKana.last().toString()
+                val currentIndex = cycle.indexOf(lastChar)
+                val nextIndex = if (currentIndex >= 0) (currentIndex + 1) % cycle.size else 0
+                val nextKana = cycle[nextIndex]
+
+                composingFlickKana = composingFlickKana.dropLast(1) + nextKana
+                composingKana = composingFlickKana
+                ic.setComposingText(composingFlickKana, 1)
+                updatePredictions(composingFlickKana)
+                lastFlickTapTime = now
+                return
+            }
+        }
+
+        // Normal input (flick or first tap)
         composingFlickKana += kana
         composingKana = composingFlickKana
         ic.setComposingText(composingFlickKana, 1)
         updatePredictions(composingFlickKana)
+
+        if (isFlickTap) {
+            lastFlickKeyId = flickKeyId
+            lastFlickTapTime = now
+        } else {
+            lastFlickKeyId = ""
+            lastFlickTapTime = 0L
+        }
     }
 
     fun processFlickDakuten(type: DakutenType) {

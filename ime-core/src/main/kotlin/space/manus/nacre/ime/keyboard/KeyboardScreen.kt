@@ -101,15 +101,11 @@ private fun StandardKeyboardScreen(service: NacreInputMethodService) {
     val bgColor = Color(theme.background.toInt())
     val accentColor = Color(theme.accent.toInt())
 
-    val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
     val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
     val isLargeScreen = screenWidthDp > 500.dp
-    val maxKeyboardHeight = if (isLargeScreen) 256.dp else screenHeightDp * 0.38f
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = maxKeyboardHeight)
             .background(bgColor)
             .padding(horizontal = 4.dp, vertical = 1.dp),
     ) {
