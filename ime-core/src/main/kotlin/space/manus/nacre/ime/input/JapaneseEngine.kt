@@ -31,19 +31,13 @@ class JapaneseEngine {
                     i += 2
                     continue
                 }
-                // nn handling — Gboard-compatible:
-                // "nn" followed by vowel/y → ん + keep second n (nni→んに, nna→んな)
-                // "nn" followed by consonant/end → ん + consume both n's (nnk→んk, nn$→ん)
+                // nn handling — "nn" always produces ん and consumes both n's.
+                // "nni" → ん+い, "nna" → ん+あ, "nnya" → ん+や
+                // This matches standard Japanese IME behavior where nn is the
+                // explicit way to commit ん before a vowel or y.
                 if (i + 1 < lower.length && lower[i + 1] == 'n') {
-                    if (i + 2 < lower.length && (lower[i + 2] in VOWELS_AND_Y)) {
-                        // nn + vowel/y: first n→ん, second n stays for na/ni/nu/ne/no/nya etc.
-                        result.append("ん")
-                        i += 1  // consume only first n
-                    } else {
-                        // nn + consonant or nn at end: consume both
-                        result.append("ん")
-                        i += 2
-                    }
+                    result.append("ん")
+                    i += 2  // always consume both n's
                     continue
                 }
                 // n + consonant (not n, not vowel, not y) → ん + keep consonant

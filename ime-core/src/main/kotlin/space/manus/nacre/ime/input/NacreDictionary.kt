@@ -99,6 +99,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         loadConnectionMatrix()
         loadMozcDictionary()
         loadSlangDictionary()
+        loadSupplementaryDict("dict/common_phrases.tsv", "common phrases")
         loadSupplementaryDict("dict/emoji_kaomoji.tsv", "emoji/kaomoji")
         loadSupplementaryDict("dict/symbols.tsv", "symbols")
 
@@ -404,6 +405,12 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         }.toMutableList()
 
         kenLmRescore(boosted)
+
+        // Post-rescore filter: remove candidates with catastrophically bad LM scores
+        if (kenLmScorer?.isReady() == true && boosted.size > 3) {
+            val bestCost = boosted.minOf { it.cost }
+            boosted.removeAll { it.cost > bestCost + 10000 && it.cost > bestCost * 3 }
+        }
 
         return boosted.sortedBy { it.cost }.take(if (kana.length <= 3) 40 else 30)
     }
@@ -1377,10 +1384,10 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
 
     companion object {
         private const val DEFAULT_CONNECTION_COST = 2000
-        // KenLM weight for post-hoc rescoring
-        private const val KENLM_WEIGHT = 2500f
-        // KenLM weight inside Viterbi (lower than post-hoc to avoid dominating beam search)
-        private const val VITERBI_LM_WEIGHT = 1500f
+        // KenLM weight for post-hoc rescoring (high: LM should strongly influence final ranking)
+        private const val KENLM_WEIGHT = 5000f
+        // KenLM weight inside Viterbi (moderate: guide segmentation without over-pruning beam)
+        private const val VITERBI_LM_WEIGHT = 3000f
 
         // Mozc POS ID range checks (from id.def)
         fun isNoun(id: Int) = id in 1841..2193
@@ -1458,9 +1465,9 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         // Beam width: wider when KenLM is available (LM scoring benefits from more paths)
         val hasLm = kenLmScorer?.isReady() == true
         val K = when {
-            n <= 6 -> if (hasLm) 25 else 20
-            n <= 10 -> if (hasLm) 22 else 18
-            else -> if (hasLm) 18 else 15
+            n <= 6 -> if (hasLm) 40 else 25
+            n <= 10 -> if (hasLm) 35 else 22
+            else -> if (hasLm) 30 else 18
         }
         val dp = Array(n + 1) { mutableListOf<Node>() }
         dp[0].add(Node(cost = 0, backPos = -1, surface = "", reading = "", segCount = 0,
@@ -1493,13 +1500,28 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                             }
                             cost += connCost
 
-                            // Hiragana surface bonus (reduced — full Mozc matrix handles most POS transitions)
-                            if (entry.surface == segment) {
-                                if (isParticle(entry.leftGroup) && segLen <= 2 && isAfterContentWord) cost -= 1500
-                                if (isAuxVerb(entry.leftGroup) && segLen <= 3 && isAfterContentWord) cost -= 1200
-                                if (segLen <= 3 && isAfterContentWord && !isFunctionWord(entry.leftGroup)) cost -= 800
-                                if (segLen <= 2 && isAfterFunctionWord && isFunctionWord(entry.leftGroup)) cost -= 600
-                                if (segLen <= 2 && isAfterFunctionWord && !isFunctionWord(entry.leftGroup)) cost -= 300
+                            // Hiragana function word handling:
+                            // When the segment is hiragana input, strongly prefer function word
+                            // readings over kanji content-word readings.
+                            // e.g. になっ → になっ (function) over 担っ (content)
+                            val isHiraganaSegment = segment.all { it in '\u3040'..'\u309F' }
+                            if (isHiraganaSegment) {
+                                if (entry.surface == segment) {
+                                    // Hiragana-as-is: strong bonus for function words
+                                    if (isParticle(entry.leftGroup) && segLen <= 2 && isAfterContentWord) cost -= 2500
+                                    if (isAuxVerb(entry.leftGroup) && segLen <= 3 && isAfterContentWord) cost -= 2000
+                                    if (isFunctionWord(entry.leftGroup) && segLen <= 4) cost -= 1500
+                                    if (segLen <= 3 && isAfterContentWord && !isFunctionWord(entry.leftGroup)) cost -= 800
+                                    if (segLen <= 2 && isAfterFunctionWord && isFunctionWord(entry.leftGroup)) cost -= 800
+                                    if (segLen <= 2 && isAfterFunctionWord && !isFunctionWord(entry.leftGroup)) cost -= 300
+                                } else if (segLen <= 3 && !isContentWord(entry.leftGroup)) {
+                                    // Short hiragana → kanji non-content: mild bonus
+                                    cost -= 300
+                                } else if (segLen <= 3 && isContentWord(entry.leftGroup)) {
+                                    // Short hiragana → kanji content word: penalty
+                                    // Prevents になっ→担っ, にな→仁菜 etc.
+                                    cost += 2000
+                                }
                             }
 
                             val lBonus = lengthBonus(segLen)
