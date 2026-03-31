@@ -21,10 +21,11 @@ object PresetProvider {
 
     // Row 4 shared modifier row
     private val modifierRow = listOf(
-        KeyDef("Shift", action = KeyAction.Shift),
-        KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-        KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.7f),
-        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2.5f,
+        KeyDef("Shift", action = KeyAction.Shift, widthMultiplier = 0.9f),
+        KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.45f),
+        KeyDef("↓", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.45f),
+        KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.6f),
+        KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
             swipeUp = "Tab", swipeLeft = "\u30FC"),
         KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
         KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),
@@ -178,10 +179,11 @@ object PresetProvider {
             ),
             // Row 4: Emacs modifiers
             listOf(
-                KeyDef("Shift", action = KeyAction.Shift),
-                KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-                KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT), widthMultiplier = 0.7f),
-                KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2.5f,
+                KeyDef("Shift", action = KeyAction.Shift, widthMultiplier = 0.9f),
+                KeyDef("↑", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.45f),
+                KeyDef("↓", action = KeyAction.KeyCode(KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.45f),
+                KeyDef("Ctrl", action = KeyAction.KeyCode(KeyEvent.KEYCODE_CTRL_LEFT), widthMultiplier = 0.6f),
+                KeyDef(" ", label = "\u23B5", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeUp = "Tab", swipeLeft = "\u30FC"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
                 KeyDef("\u3042", label = "\u3042", action = KeyAction.ToggleJapanese),

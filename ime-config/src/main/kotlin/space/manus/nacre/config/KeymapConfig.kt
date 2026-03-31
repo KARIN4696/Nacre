@@ -69,12 +69,13 @@ object DefaultLayouts {
                 key(".", swipeUp = "！", swipeDown = "。"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: Shift ↑ Fn Space Alt Enter (↓ removed, Space expanded)
+            // Row 4: Shift ↑ ↓ Fn Space Alt Enter
             listOf(
-                KeyDef("Shift", action = KeyAction.Shift),
-                KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.7f),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3.5f,
+                KeyDef("Shift", action = KeyAction.Shift, widthMultiplier = 0.9f),
+                KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.45f),
+                KeyDef("↓", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.45f),
+                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.6f),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
@@ -106,14 +107,15 @@ object DefaultLayouts {
                 key("~"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: Shift ↑ Emoji #+ Fn2 Space Alt Enter
+            // Row 4: Shift ↑ ↓ 😀 #+ Fn2 Space Alt Enter
             listOf(
-                KeyDef("Shift", action = KeyAction.Shift),
-                KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-                KeyDef("😀", action = KeyAction.Emoji, widthMultiplier = 0.7f),
-                KeyDef("#+", label = "#+", action = KeyAction.Symbols, widthMultiplier = 0.7f),
-                KeyDef("Fn2", action = KeyAction.FnPage2, widthMultiplier = 0.7f),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
+                KeyDef("Shift", action = KeyAction.Shift, widthMultiplier = 0.9f),
+                KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.45f),
+                KeyDef("↓", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.45f),
+                KeyDef("😀", action = KeyAction.Emoji, widthMultiplier = 0.6f),
+                KeyDef("#+", label = "#+", action = KeyAction.Symbols, widthMultiplier = 0.6f),
+                KeyDef("Fn2", action = KeyAction.FnPage2, widthMultiplier = 0.6f),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 1.8f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
@@ -153,12 +155,13 @@ object DefaultLayouts {
                 key("_"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: Shift ↑ Fn Space Alt Enter (↓ removed, Space expanded)
+            // Row 4: Shift ↑ ↓ Fn Space Alt Enter
             listOf(
-                KeyDef("Shift", action = KeyAction.Shift),
-                KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
-                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.7f),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3.5f,
+                KeyDef("Shift", action = KeyAction.Shift, widthMultiplier = 0.9f),
+                KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.45f),
+                KeyDef("↓", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_DOWN), widthMultiplier = 0.45f),
+                KeyDef("Fn", action = KeyAction.Fn, widthMultiplier = 0.6f),
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
