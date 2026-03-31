@@ -35,6 +35,19 @@ jobs:
           cp -r /tmp/kenlm-src/lm ime-ai/src/main/cpp/kenlm/
           cp -r /tmp/kenlm-src/util ime-ai/src/main/cpp/kenlm/
 
+      - name: Clone whisper.cpp source
+        run: |
+          git clone --depth 1 --branch v1.7.3 https://github.com/ggerganov/whisper.cpp /tmp/whisper-src
+          mkdir -p ime-ai/src/main/cpp/whisper
+          cp /tmp/whisper-src/src/whisper.cpp ime-ai/src/main/cpp/whisper/
+          cp /tmp/whisper-src/include/whisper.h ime-ai/src/main/cpp/whisper/
+          cp /tmp/whisper-src/ggml/src/ggml.c ime-ai/src/main/cpp/whisper/
+          cp /tmp/whisper-src/ggml/src/ggml-alloc.c ime-ai/src/main/cpp/whisper/
+          cp /tmp/whisper-src/ggml/src/ggml-backend.c ime-ai/src/main/cpp/whisper/
+          cp /tmp/whisper-src/ggml/src/ggml-quants.c ime-ai/src/main/cpp/whisper/
+          cp /tmp/whisper-src/ggml/src/ggml-cpu*.c ime-ai/src/main/cpp/whisper/ 2>/dev/null || true
+          cp /tmp/whisper-src/ggml/include/*.h ime-ai/src/main/cpp/whisper/
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
