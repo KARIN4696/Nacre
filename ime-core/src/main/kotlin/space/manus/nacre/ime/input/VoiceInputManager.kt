@@ -70,6 +70,15 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     private val whisperConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
             whisperService = IWhisperService.Stub.asInterface(binder)
+            // Auto-load Whisper model if not already loaded
+            try {
+                if (!whisperService!!.isModelLoaded) {
+                    val modelPath = space.manus.nacre.ai.ModelDownloader(service).getWhisperModelPath()
+                    if (modelPath != null) {
+                        whisperService!!.loadModel(modelPath)
+                    }
+                }
+            } catch (_: android.os.RemoteException) {}
         }
         override fun onServiceDisconnected(name: android.content.ComponentName?) {
             whisperService = null
