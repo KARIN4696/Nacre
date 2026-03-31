@@ -8,10 +8,11 @@ set(CMAKE_C_STANDARD 11)
 # === Whisper.cpp (optional - sources cloned by CI) ===
 set(WHISPER_DIR "${CMAKE_SOURCE_DIR}/whisper")
 if(EXISTS "${WHISPER_DIR}/whisper.cpp")
-    file(GLOB WHISPER_C_SRCS "${WHISPER_DIR}/*.c")
-    file(GLOB WHISPER_CPP_SRCS "${WHISPER_DIR}/whisper.cpp")
+    file(GLOB WHISPER_C_SRCS   "${WHISPER_DIR}/*.c")
+    file(GLOB WHISPER_CPP_SRCS "${WHISPER_DIR}/*.cpp")
     # Exclude non-CPU backends if present
-    list(FILTER WHISPER_C_SRCS EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc)")
+    list(FILTER WHISPER_C_SRCS   EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc|cann|blas|amx)")
+    list(FILTER WHISPER_CPP_SRCS EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc|cann|blas|amx)")
 
     add_library(whisper_lib STATIC
         ${WHISPER_CPP_SRCS}
