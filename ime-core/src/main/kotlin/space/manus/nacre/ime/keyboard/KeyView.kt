@@ -286,11 +286,17 @@ fun KeyView(
     ) {
         // Main label
         if (keyDef.action is KeyAction.ToggleJapanese) {
-            // Show "あ" when Japanese active, "A" when English
+            // If label is custom (e.g. "あa1"), show it as-is
+            // Otherwise show "あ" when Japanese / "A" when English
+            val toggleLabel = if (keyDef.label != keyDef.primary && keyDef.label.length > 1) {
+                keyDef.label
+            } else {
+                if (service.layerManager.isJapanese) "あ" else "A"
+            }
             Text(
-                text = if (service.layerManager.isJapanese) "あ" else "A",
+                text = toggleLabel,
                 color = textColor,
-                fontSize = 14.sp,
+                fontSize = if (toggleLabel.length > 2) 11.sp else 14.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                 textAlign = TextAlign.Center,

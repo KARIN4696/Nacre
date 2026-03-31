@@ -98,7 +98,7 @@ private fun FlickKanaGrid(service: NacreInputMethodService) {
         }
         // Row 3: ☺記 | ま | や | ら | ␣
         Row(modifier = Modifier.fillMaxWidth().height(h)) {
-            KeyView(keyDef = KeyDef("☺記", action = KeyAction.Emoji), service = service, modifier = Modifier.weight(sw), row = 2, column = 0, heightDp = FLICK_ROW_HEIGHT)
+            KeyView(keyDef = KeyDef("記号", action = KeyAction.Emoji), service = service, modifier = Modifier.weight(sw), row = 2, column = 0, heightDp = FLICK_ROW_HEIGHT)
             FlickKeyView(flickKey = kanaKeys[6], service = service, modifier = Modifier.weight(1f), row = 2, column = 1)
             FlickKeyView(flickKey = kanaKeys[7], service = service, modifier = Modifier.weight(1f), row = 2, column = 2)
             FlickKeyView(flickKey = kanaKeys[8], service = service, modifier = Modifier.weight(1f), row = 2, column = 3)
@@ -168,6 +168,7 @@ private fun FlickKeyView(
 
     Box(
         modifier = modifier
+            .fillMaxHeight()
             .padding(horizontal = 1.dp, vertical = 1.dp)
             .scale(scale)
             .clip(shape)
@@ -358,6 +359,7 @@ private fun DakutenKeyView(
 
     Box(
         modifier = modifier
+            .fillMaxHeight()
             .padding(horizontal = 1.dp, vertical = 1.dp)
             .scale(scale)
             .clip(shape)
@@ -543,6 +545,7 @@ private fun FlickModKeyView(
 
     Box(
         modifier = modifier
+            .fillMaxHeight()
             .padding(horizontal = 1.dp, vertical = 1.dp)
             .scale(scale)
             .clip(shape)

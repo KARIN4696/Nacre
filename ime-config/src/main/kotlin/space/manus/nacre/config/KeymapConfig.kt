@@ -106,12 +106,14 @@ object DefaultLayouts {
                 key("~"),
                 KeyDef("⌫", action = KeyAction.Backspace, swipeLeft = "⌫w"),
             ),
-            // Row 4: Shift ↑ Fn2 Space Alt Enter
+            // Row 4: Shift ↑ Emoji #+ Fn2 Space Alt Enter
             listOf(
                 KeyDef("Shift", action = KeyAction.Shift),
                 KeyDef("↑", action = KeyAction.KeyCode(android.view.KeyEvent.KEYCODE_DPAD_UP), widthMultiplier = 0.5f),
+                KeyDef("😀", action = KeyAction.Emoji, widthMultiplier = 0.7f),
+                KeyDef("#+", label = "#+", action = KeyAction.Symbols, widthMultiplier = 0.7f),
                 KeyDef("Fn2", action = KeyAction.FnPage2, widthMultiplier = 0.7f),
-                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 3f,
+                KeyDef(" ", label = "⎵", action = KeyAction.Space, widthMultiplier = 2f,
                     swipeUp = "Tab", swipeLeft = "ToggleJa", swipeRight = "ToggleJa"),
                 KeyDef("Alt", action = KeyAction.Alt, widthMultiplier = 0.7f),
                 KeyDef("↵", action = KeyAction.Enter, widthMultiplier = 1.2f),
