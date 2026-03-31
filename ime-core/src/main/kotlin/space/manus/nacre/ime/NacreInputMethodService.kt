@@ -146,7 +146,7 @@ class NacreInputMethodService :
 
                 // Search for model anywhere on device (Download, Documents, etc.)
                 if (!fullModel.exists()) {
-                    val downloader = space.manus.nacre.ai.ModelDownloader(this)
+                    val downloader = space.manus.nacre.ai.ModelDownloader(this@NacreInputMethodService)
                     val foundPath = downloader.getKenLmModelPath()
                     if (foundPath != null && foundPath != fullModel.absolutePath) {
                         val extSource = java.io.File(foundPath)
