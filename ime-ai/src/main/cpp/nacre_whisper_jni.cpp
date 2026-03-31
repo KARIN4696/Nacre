@@ -85,7 +85,8 @@ Java_space_manus_nacre_ai_WhisperJni_transcribe(JNIEnv* env, jobject, jfloatArra
     const char* lang = env->GetStringUTFChars(language, nullptr);
 
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    params.language = lang;
+    // Set language - "auto" enables auto-detection
+    params.language = (lang != nullptr && strlen(lang) > 0) ? lang : "auto";
     params.n_threads = 4;
     params.no_timestamps = true;
     params.single_segment = true;
