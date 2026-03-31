@@ -29,6 +29,7 @@ if(EXISTS "${WHISPER_DIR}/whisper.cpp")
         "${WHISPER_DIR}"
         "${WHISPER_DIR}/ggml-include"
         "${WHISPER_DIR}/ggml-src"
+        "${WHISPER_DIR}/ggml-src/ggml-cpu"
     )
     target_compile_definitions(whisper_lib PRIVATE
         GGML_USE_CPU
