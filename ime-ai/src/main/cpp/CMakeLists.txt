@@ -5,27 +5,28 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 
-# --- whisper.cpp ---
-# Source: https://github.com/ggerganov/whisper.cpp
-# Place whisper.cpp source in ime-ai/src/main/cpp/whisper/
-set(WHISPER_DIR ${CMAKE_SOURCE_DIR}/whisper)
-if(EXISTS ${WHISPER_DIR}/whisper.cpp)
-    add_library(whisper STATIC
-        ${WHISPER_DIR}/whisper.cpp
-        ${WHISPER_DIR}/ggml.c
-        ${WHISPER_DIR}/ggml-alloc.c
-        ${WHISPER_DIR}/ggml-backend.c
-        ${WHISPER_DIR}/ggml-quants.c
+# === Whisper.cpp (optional - sources cloned by CI) ===
+set(WHISPER_DIR "${CMAKE_SOURCE_DIR}/whisper")
+if(EXISTS "${WHISPER_DIR}/whisper.cpp")
+    file(GLOB WHISPER_C_SRCS "${WHISPER_DIR}/*.c")
+    file(GLOB WHISPER_CPP_SRCS "${WHISPER_DIR}/whisper.cpp")
+    # Exclude non-CPU backends if present
+    list(FILTER WHISPER_C_SRCS EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc)")
+
+    add_library(whisper_lib STATIC
+        ${WHISPER_CPP_SRCS}
+        ${WHISPER_C_SRCS}
     )
-    target_include_directories(whisper PUBLIC ${WHISPER_DIR})
-    target_compile_definitions(whisper PRIVATE
+    target_include_directories(whisper_lib PUBLIC "${WHISPER_DIR}")
+    target_compile_definitions(whisper_lib PRIVATE
         GGML_USE_CPU
         NDEBUG
     )
     set(WHISPER_AVAILABLE TRUE)
+    message(STATUS "whisper.cpp: ENABLED (GLOB)")
 else()
-    message(WARNING "whisper.cpp sources not found at ${WHISPER_DIR}. Building stub.")
     set(WHISPER_AVAILABLE FALSE)
+    message(STATUS "whisper.cpp: DISABLED (sources not found)")
 endif()
 
 # --- llama.cpp ---
@@ -118,7 +119,7 @@ target_link_libraries(nacre-ai
 )
 
 if(WHISPER_AVAILABLE)
-    target_link_libraries(nacre-ai whisper)
+    target_link_libraries(nacre-ai whisper_lib)
     target_compile_definitions(nacre-ai PRIVATE WHISPER_AVAILABLE)
 endif()
 
