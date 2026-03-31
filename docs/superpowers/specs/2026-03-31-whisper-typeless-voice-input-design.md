@@ -18,6 +18,9 @@ Typeless（$30/月のAI音声入力アプリ）と同等以上の機能を、完
 | 推論戦略 | Greedy + KenLMリランキング | beam searchは最終出力1つ。Greedy高速+KenLMで文脈担保 |
 | モデル配布 | GitHub Releases（KenLMと同じ） | 既存インフラ再利用 |
 | アーキテクチャ | 既存WhisperService改修 | 80%コード再利用、AIDL/プロセス分離そのまま |
+| whisper.cppバージョン | 特定タグにpin（v1.7.3等） | ggml構造が頻繁に変わるため。CIで `--branch <tag>` 指定 |
+| KenLMプロセス配置 | メインプロセスのみ（:whisperには載せない） | 561MB追加ロードを回避。PostProcessorのKenLMスコアリングはメインプロセス側で実行 |
+| モデルファイル名 | `ggml-base.bin` | whisper.cpp公式の命名に合わせる。ModelDownloader内の参照も統一 |
 
 ## Typeless機能対応表
 
@@ -59,12 +62,13 @@ Typeless（$30/月のAI音声入力アプリ）と同等以上の機能を、完
 │  - バッファ蓄積 → onPartialResult逐次送信                │
 │  - stopRecognition()でバッファ全体を返す                  │
 ├──────────────────────────────────────────────────────────┤
-│ PostProcessor (ime-ai, same process as WhisperService)    │
-│  - KenLMリランキング（チャンク接続の自然さ）              │
-│  - 自動句読点挿入（。、？！）                             │
-│  - フィラー/冗長表現除去                                  │
-│  - 言い直し検出 & 最終意図のみ保持                        │
+│ PostProcessor (ime-ai, :whisper process)                   │
+│  - ルールベース処理（KenLM不要）:                         │
+│    - フィラー/冗長表現除去                                │
+│    - 言い直し検出 & 最終意図のみ保持                      │
+│    - 自動句読点挿入（ルールベース）                       │
 │  - 日英混在: そのまま保持（Whisperが自動判定）            │
+│  ※ KenLMスコアリングはメインプロセス側で最終確定時に実行  │
 ├──────────────────────────────────────────────────────────┤
 │ LlmService (:llm process) — オプション高品質モード        │
 │  - 口語→書き言葉リライト（Typelessの核心機能）            │
@@ -74,6 +78,42 @@ Typeless（$30/月のAI音声入力アプリ）と同等以上の機能を、完
 │ WhisperJni → libnacre-ai.so (whisper.cpp + kenlm)        │
 └──────────────────────────────────────────────────────────┘
 ```
+
+## コルーチンアーキテクチャ（WhisperService内部）
+
+```
+startContinuousRecognition()
+    │
+    ├─ recordingJob = launch(Dispatchers.Default) {
+    │       AudioRecord開始
+    │       while (active && elapsed < 360sec) {
+    │           read 250ms chunk → rmsLevel計算
+    │           if (voice detected) audioBuffer.addAll(chunk)
+    │           if (silence >= 1.5sec && audioBuffer.isNotEmpty()) {
+    │               val chunkAudio = audioBuffer.toFloatArray()
+    │               audioBuffer.clear()
+    │               transcriptionChannel.send(chunkAudio)  // non-blocking
+    │           }
+    │       }
+    │   }
+    │
+    └─ transcriptionJob = launch(Dispatchers.Default) {
+            for (chunkAudio in transcriptionChannel) {
+                // g_mutex in JNI serializes transcription (OK, sequential)
+                val rawText = WhisperJni.transcribe(chunkAudio, language)
+                val processed = postProcessor.process(rawText, kenLmScorer=null)
+                textBuffer.append(processed.text)
+                callback.onPartialResult(textBuffer.toString())
+            }
+        }
+```
+
+**重要な設計ポイント:**
+- 録音コルーチンと推論コルーチンは `Channel<FloatArray>` で疎結合
+- 推論が遅延しても録音は途切れない（Channelがバッファ）
+- `WhisperJni.transcribe()` は内部で `g_mutex` を取るため推論は直列化される（許容範囲）
+- 各チャンクは個別の `FloatArray`（1-5秒分 = 64KB-320KB）。生音声バッファは蓄積しない（テキストのみ蓄積）
+- 6分録音でもメモリ使用量は最大でチャンク1個分 + テキストバッファのみ
 
 ## データフロー
 
@@ -134,8 +174,8 @@ VAD (Voice Activity Detection)
 
 | ファイル | 変更内容 |
 |---|---|
-| `ime-ai/src/main/cpp/CMakeLists.txt` | whisper.cppソースパス追加（既存の条件付きビルドを維持） |
-| `ime-ai/src/main/cpp/nacre_whisper_jni.cpp` | 変更なし（Greedy維持、既存で十分） |
+| `ime-ai/src/main/cpp/CMakeLists.txt` | whisper.cppソースをGLOBで収集（ggml構造変更に追従）。CPU backend のみコピー |
+| `ime-ai/src/main/cpp/nacre_whisper_jni.cpp` | `language="auto"` のサポート確認。`single_segment=true` は短チャンクでも有効（検証済み前提） |
 | `ime-ai/src/main/kotlin/.../WhisperService.kt` | `startContinuousRecognition()` 追加、VADチャンク分割改修、バッファ蓄積、PostProcessor呼び出し |
 | `ime-ai/src/main/kotlin/.../PostProcessor.kt` | **新規** — フィラー除去、自己訂正検出、自動句読点、音声コマンド検出 |
 | `ime-ai/src/main/kotlin/.../ModelDownloader.kt` | `downloadWhisperBase()` 追加 |
@@ -155,9 +195,9 @@ VAD (Voice Activity Detection)
 class PostProcessor {
     fun removeFiller(text: String): String
     fun resolveCorrections(text: String): String
-    fun insertPunctuation(text: String, kenLmScorer: KenLmScorer?): String
+    fun insertPunctuation(text: String): String  // ルールベースのみ（KenLMはメインプロセス側）
     fun detectVoiceCommand(text: String): VoiceCommand?
-    fun process(text: String, kenLmScorer: KenLmScorer?): ProcessResult
+    fun process(text: String): ProcessResult
 }
 
 sealed class VoiceCommand {
@@ -187,17 +227,30 @@ WhisperService利用可能？
   ├─ YES → startContinuousRecognition()
   │         composing textでプレビュー
   │         停止タップ → commitText
+  │         キャンセル → cancelContinuousRecognition() → テキスト破棄
   └─ NO  → 既存SpeechRecognizer（フォールバック）
 ```
+
+**Composing textの長文対策:**
+- 既存の `tryStreamingCommit` / `findStablePrefix` ロジックを再利用
+- 安定した先頭部分（3回連続同一 or KenLMで文境界確認済み）は `commitText` で確定
+- composing textには直近の未確定チャンクのみ表示
+- これにより6分録音でもcomposing spanは短く保たれる
+
+**AudioFocus:**
+- 録音開始時に `AudioManager.requestAudioFocus()` でメディア再生を一時停止
+- 録音終了時に `abandonAudioFocus()` で解放
 
 ### IWhisperService AIDL追加
 
 ```java
 // 既存メソッドに追加
-void startContinuousRecognition(String language, IWhisperCallback callback);
+void startContinuousRecognition(String language, IWhisperCallback callback);  // +6
+void cancelContinuousRecognition();  // +7
 ```
 
-Transaction code追加、Stub/Proxyに実装追加。
+Transaction codes: `TRANSACTION_startContinuousRecognition = FIRST_CALL_TRANSACTION + 6`, `TRANSACTION_cancelContinuousRecognition = FIRST_CALL_TRANSACTION + 7`。
+既存の transaction codes (0-5) は変更不可。Stub/Proxyに実装追加。
 
 ### CI変更（build-android.yml）
 
@@ -206,13 +259,22 @@ KenLMと同パターンでwhisper.cppをclone:
 ```yaml
 - name: Clone whisper.cpp source
   run: |
-    git clone --depth 1 https://github.com/ggerganov/whisper.cpp /tmp/whisper-src
+    git clone --depth 1 --branch v1.7.3 https://github.com/ggerganov/whisper.cpp /tmp/whisper-src
     mkdir -p ime-ai/src/main/cpp/whisper
+    # Core whisper sources
     cp /tmp/whisper-src/src/whisper.cpp ime-ai/src/main/cpp/whisper/
     cp /tmp/whisper-src/include/whisper.h ime-ai/src/main/cpp/whisper/
-    cp -r /tmp/whisper-src/ggml/src/* ime-ai/src/main/cpp/whisper/
-    cp -r /tmp/whisper-src/ggml/include/* ime-ai/src/main/cpp/whisper/
+    # GGML sources — CPU backend only (exclude CUDA/Metal/Vulkan)
+    cp /tmp/whisper-src/ggml/src/ggml.c ime-ai/src/main/cpp/whisper/
+    cp /tmp/whisper-src/ggml/src/ggml-alloc.c ime-ai/src/main/cpp/whisper/
+    cp /tmp/whisper-src/ggml/src/ggml-backend.c ime-ai/src/main/cpp/whisper/
+    cp /tmp/whisper-src/ggml/src/ggml-quants.c ime-ai/src/main/cpp/whisper/
+    cp /tmp/whisper-src/ggml/src/ggml-cpu*.c ime-ai/src/main/cpp/whisper/ 2>/dev/null || true
+    cp /tmp/whisper-src/ggml/include/*.h ime-ai/src/main/cpp/whisper/
 ```
+
+**注意:** whisper.cppはタグ `v1.7.3` にピン。ggml構造が頻繁に変わるため、アップグレード時はCIビルドで検証必須。
+CMakeLists.txtでは `file(GLOB ...)` で `whisper/` 内の `.c` `.cpp` を収集し、ハードコードリストを廃止する。
 
 ### ModelDownloader 追加
 
@@ -223,6 +285,9 @@ fun downloadWhisperBase(onProgress: (Float) -> Unit, onComplete: (Boolean) -> Un
     // Resume support（既存のダウンロードロジック再利用）
 }
 ```
+
+**前提条件:** `ggml-base.bin` を GitHub Releases `v0.1.0-models` にアップロードしておく必要がある。
+Hugging Face `ggerganov/whisper.cpp` から取得し、リリースに追加する。
 
 ## エラーハンドリング
 
@@ -235,6 +300,7 @@ fun downloadWhisperBase(onProgress: (Float) -> Unit, onComplete: (Boolean) -> Un
 | バッテリー低下（20%未満） | 既存のバッテリーチェック維持。音声入力無効化 |
 | WhisperService接続切れ | onServiceDisconnected → 再接続 or フォールバック |
 | チャンク推論遅延（>1秒） | 録音継続（推論は別コルーチン）。プレビューが少し遅れるだけ |
+| ユーザーがキャンセル | `cancelContinuousRecognition()` → 録音停止、バッファ破棄、テキスト未確定分をクリア |
 
 ## パフォーマンス目安（Z Fold6, Snapdragon 8 Gen 3）
 
