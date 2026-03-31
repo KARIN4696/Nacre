@@ -143,7 +143,7 @@ private fun FlickKanaGrid(
         }
         // Row 3: 記号 | ま | や | ら | ␣  (tap=symbols, long-press=emoji)
         Row(modifier = Modifier.fillMaxWidth().height(h)) {
-            SymbolEmojiKey(label = "記号", modifier = Modifier.weight(sw), service = service, onTap = onSymbols, onLongPress = onEmoji)
+            SymbolEmojiKey(label = "絵記", modifier = Modifier.weight(sw), service = service, onTap = onEmoji, onLongPress = onSymbols)
             FlickKeyView(flickKey = kanaKeys[6], service = service, modifier = Modifier.weight(1f), row = 2, column = 1)
             FlickKeyView(flickKey = kanaKeys[7], service = service, modifier = Modifier.weight(1f), row = 2, column = 2)
             FlickKeyView(flickKey = kanaKeys[8], service = service, modifier = Modifier.weight(1f), row = 2, column = 3)
@@ -213,7 +213,7 @@ private fun FlickAlphaGrid(
         }
         // Row 3: 記号 | pqrs | tuv | wxyz | ␣  (tap=symbols, long-press=emoji)
         Row(modifier = Modifier.fillMaxWidth().height(h)) {
-            SymbolEmojiKey(label = "記号", modifier = Modifier.weight(sw), service = service, onTap = onSymbols, onLongPress = onEmoji)
+            SymbolEmojiKey(label = "絵記", modifier = Modifier.weight(sw), service = service, onTap = onEmoji, onLongPress = onSymbols)
             FlickKeyView(flickKey = alphaKeys[6], service = service, modifier = Modifier.weight(1f), row = 2, column = 1)
             FlickKeyView(flickKey = alphaKeys[7], service = service, modifier = Modifier.weight(1f), row = 2, column = 2)
             FlickKeyView(flickKey = alphaKeys[8], service = service, modifier = Modifier.weight(1f), row = 2, column = 3)
@@ -264,7 +264,7 @@ private fun FlickNumberGrid(
         }
         // Row 3: 記号 | 7 | 8 | 9 | ␣  (tap=symbols, long-press=emoji)
         Row(modifier = Modifier.fillMaxWidth().height(h)) {
-            SymbolEmojiKey(label = "記号", modifier = Modifier.weight(sw), service = service, onTap = onSymbols, onLongPress = onEmoji)
+            SymbolEmojiKey(label = "絵記", modifier = Modifier.weight(sw), service = service, onTap = onEmoji, onLongPress = onSymbols)
             KeyView(keyDef = KeyDef("7"), service = service, modifier = Modifier.weight(1f), row = 2, column = 1, heightDp = FLICK_ROW_HEIGHT)
             KeyView(keyDef = KeyDef("8"), service = service, modifier = Modifier.weight(1f), row = 2, column = 2, heightDp = FLICK_ROW_HEIGHT)
             KeyView(keyDef = KeyDef("9"), service = service, modifier = Modifier.weight(1f), row = 2, column = 3, heightDp = FLICK_ROW_HEIGHT)
@@ -529,9 +529,13 @@ private fun FlickKeyView(
                         showPopup = false
                     }
 
-                    // Commit resolved kana
-                    val kana = FlickEngine.resolveFlick(flickKey, resolved)
+                    // Commit resolved kana (apply Shift for uppercase if active)
+                    var kana = FlickEngine.resolveFlick(flickKey, resolved)
                     if (kana != null) {
+                        if (service.layerManager.isShifted && kana.first().isLetter()) {
+                            kana = kana.uppercase()
+                            service.layerManager.toggleShift() // auto-reset after one char
+                        }
                         val isTap = resolved == FlickEngine.Direction.Tap
                         service.inputEngine.processFlickKana(kana, flickKeyId = flickKey.id, isFlickTap = isTap)
                         service.feedbackManager.onKeyPress(KeyAction.Text(kana))
