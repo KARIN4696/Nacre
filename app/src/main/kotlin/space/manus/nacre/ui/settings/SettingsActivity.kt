@@ -161,9 +161,11 @@ fun NacreSettingsScreen() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // --- KenLM Model ---
-        SectionHeader("Language Model")
+        // --- AI Models ---
+        SectionHeader("AI Models")
         KenLmModelSection()
+        Spacer(modifier = Modifier.height(8.dp))
+        WhisperModelSection()
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -698,32 +700,38 @@ private fun KenLmModelSection() {
         }.start()
     }
 
+    // Also check if model is found anywhere on device via ModelDownloader
+    val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
+    val foundPath = remember { downloader.getKenLmModelPath() }
+    val effectiveExists = modelExists || foundPath != null
+    val effectiveSize = if (modelExists) modelSize else {
+        foundPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = NacreSurface),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            if (modelExists) {
-                Text("KenLM 5-gram: Installed (${modelSize}MB)", color = NacreAccent, fontSize = 14.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Japanese language model active", color = NacreTextDim, fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("KenLM 5-gram", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Spacer(modifier = Modifier.width(8.dp))
+                if (effectiveExists) {
+                    Text("Ready", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Text("Not found", color = Color(0xFFFF6666), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            if (effectiveExists) {
+                Text("Japanese text conversion (${effectiveSize}MB)", color = NacreTextDim, fontSize = 12.sp)
+                val displayPath = if (modelExists) modelFile.absolutePath else foundPath ?: ""
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(displayPath, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
             } else {
-                Text("KenLM 5-gram: Not installed", color = NacreText, fontSize = 14.sp)
-                Spacer(modifier = Modifier.height(4.dp))
                 Text("Import a .klm model file for better Japanese conversion", color = NacreTextDim, fontSize = 12.sp)
             }
-            // Debug status
-            Spacer(modifier = Modifier.height(8.dp))
-            val nativeOk = KenLmJni.isAvailable()
-            val modelLoaded = try { if (nativeOk) KenLmJni.isModelLoaded() else false } catch (_: Throwable) { false }
-            val order = try { if (nativeOk && modelLoaded) KenLmJni.getOrder() else 0 } catch (_: Throwable) { 0 }
-            Text(
-                text = "Native: ${if (nativeOk) "✓" else "✗"}  Model: ${if (modelLoaded) "✓ (${order}-gram)" else "✗"}",
-                color = if (nativeOk && modelLoaded) NacreAccent.copy(alpha = 0.7f) else Color(0xFFFF6666),
-                fontSize = 11.sp,
-            )
-            // Model loads in IME process — isModelLoaded() here may show ✗ even when working
             Spacer(modifier = Modifier.height(12.dp))
             Button(
                 onClick = { launcher.launch(arrayOf("*/*")) },
@@ -739,6 +747,98 @@ private fun KenLmModelSection() {
                     else if (modelExists) "Replace Model"
                     else "Import Model (.klm)"
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhisperModelSection() {
+    val context = LocalContext.current
+    val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
+    var modelPath by remember { mutableStateOf(downloader.getWhisperModelPath()) }
+    var modelSize by remember {
+        mutableStateOf(
+            modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L
+        )
+    }
+    var downloading by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = NacreSurface),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (modelPath != null) "Whisper Base" else "Whisper Base",
+                    color = NacreText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                if (modelPath != null) {
+                    Text(
+                        text = "Ready",
+                        color = Color(0xFF4CAF50),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                } else {
+                    Text(
+                        text = "Not found",
+                        color = Color(0xFFFF6666),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (modelPath != null) {
+                Text(
+                    text = "Offline voice input (${modelSize}MB)",
+                    color = NacreTextDim,
+                    fontSize = 12.sp,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = modelPath!!,
+                    color = NacreTextDim.copy(alpha = 0.5f),
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                )
+            } else {
+                Text(
+                    text = "Place ggml-base.bin anywhere on device, or download below",
+                    color = NacreTextDim,
+                    fontSize = 12.sp,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        downloading = true
+                        downloader.downloadWhisperBase { success ->
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                downloading = false
+                                if (success) {
+                                    modelPath = downloader.getWhisperModelPath()
+                                    modelSize = modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L
+                                }
+                            }
+                        }
+                    },
+                    enabled = !downloading,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NacreAccent,
+                        contentColor = Color.Black,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (downloading) "Downloading..." else "Download (~142MB)")
+                }
             }
         }
     }
