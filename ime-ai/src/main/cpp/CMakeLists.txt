@@ -8,28 +8,34 @@ set(CMAKE_C_STANDARD 11)
 # === Whisper.cpp (optional - sources cloned by CI) ===
 set(WHISPER_DIR "${CMAKE_SOURCE_DIR}/whisper")
 if(EXISTS "${WHISPER_DIR}/whisper.cpp")
-    file(GLOB WHISPER_C_SRCS   "${WHISPER_DIR}/*.c")
-    file(GLOB WHISPER_CPP_SRCS "${WHISPER_DIR}/*.cpp")
-    # Exclude non-CPU backends if present
-    list(FILTER WHISPER_C_SRCS   EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc|cann|blas|amx)")
-    list(FILTER WHISPER_CPP_SRCS EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc|cann|blas|amx)")
-
-    # Add subdirectory sources needed by ggml-cpu (relative includes: "amx/amx.h", "llamafile/sgemm.h")
-    if(EXISTS "${WHISPER_DIR}/llamafile/sgemm.cpp")
-        list(APPEND WHISPER_CPP_SRCS "${WHISPER_DIR}/llamafile/sgemm.cpp")
-    endif()
+    # Collect sources — preserve subdirectory structure
+    file(GLOB WHISPER_GGML_C "${WHISPER_DIR}/ggml-src/*.c")
+    file(GLOB WHISPER_GGML_CPP "${WHISPER_DIR}/ggml-src/*.cpp")
+    file(GLOB WHISPER_GGML_CPU_C "${WHISPER_DIR}/ggml-src/ggml-cpu/*.c")
+    file(GLOB WHISPER_GGML_CPU_CPP "${WHISPER_DIR}/ggml-src/ggml-cpu/*.cpp")
+    file(GLOB WHISPER_GGML_CPU_LLAMAFILE "${WHISPER_DIR}/ggml-src/ggml-cpu/llamafile/*.cpp")
+    file(GLOB WHISPER_GGML_CPU_AMX "${WHISPER_DIR}/ggml-src/ggml-cpu/amx/*.cpp")
 
     add_library(whisper_lib STATIC
-        ${WHISPER_CPP_SRCS}
-        ${WHISPER_C_SRCS}
+        ${WHISPER_DIR}/whisper.cpp
+        ${WHISPER_GGML_C}
+        ${WHISPER_GGML_CPP}
+        ${WHISPER_GGML_CPU_C}
+        ${WHISPER_GGML_CPU_CPP}
+        ${WHISPER_GGML_CPU_LLAMAFILE}
+        ${WHISPER_GGML_CPU_AMX}
     )
-    target_include_directories(whisper_lib PUBLIC "${WHISPER_DIR}")
+    target_include_directories(whisper_lib PUBLIC
+        "${WHISPER_DIR}"
+        "${WHISPER_DIR}/ggml-include"
+        "${WHISPER_DIR}/ggml-src"
+    )
     target_compile_definitions(whisper_lib PRIVATE
         GGML_USE_CPU
         NDEBUG
     )
     set(WHISPER_AVAILABLE TRUE)
-    message(STATUS "whisper.cpp: ENABLED (GLOB)")
+    message(STATUS "whisper.cpp: ENABLED")
 else()
     set(WHISPER_AVAILABLE FALSE)
     message(STATUS "whisper.cpp: DISABLED (sources not found)")

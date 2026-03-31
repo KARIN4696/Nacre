@@ -38,44 +38,16 @@ jobs:
       - name: Clone whisper.cpp source
         run: |
           git clone --depth 1 --branch v1.7.3 https://github.com/ggerganov/whisper.cpp /tmp/whisper-src
-          mkdir -p ime-ai/src/main/cpp/whisper
-
-          # whisper core
-          cp /tmp/whisper-src/src/whisper.cpp ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/include/whisper.h ime-ai/src/main/cpp/whisper/
-
-          # ggml core sources (CPU only — exclude GPU/vendor subdirs)
-          cp /tmp/whisper-src/ggml/src/ggml.c               ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-alloc.c         ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-quants.c        ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-backend.cpp     ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-backend-reg.cpp ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-threading.cpp   ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-opt.cpp         ime-ai/src/main/cpp/whisper/
-
-          # ggml CPU backend sources (flatten from ggml-cpu/ subdir)
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu.c            ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu.cpp          ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu-quants.c     ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu-aarch64.cpp  ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu-traits.cpp   ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu-hbm.cpp      ime-ai/src/main/cpp/whisper/
-          # ggml-cpu subdirectories needed for relative includes
-          mkdir -p ime-ai/src/main/cpp/whisper/amx
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/amx.h     ime-ai/src/main/cpp/whisper/amx/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/amx.cpp   ime-ai/src/main/cpp/whisper/amx/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/common.h  ime-ai/src/main/cpp/whisper/amx/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/mmq.h     ime-ai/src/main/cpp/whisper/amx/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/mmq.cpp   ime-ai/src/main/cpp/whisper/amx/
-
-          mkdir -p ime-ai/src/main/cpp/whisper/llamafile
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/llamafile/sgemm.cpp ime-ai/src/main/cpp/whisper/llamafile/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/llamafile/sgemm.h   ime-ai/src/main/cpp/whisper/llamafile/
-
-          # ggml headers (public + internal — needed by CPU sources)
-          cp /tmp/whisper-src/ggml/include/*.h       ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml*.h       ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/*.h  ime-ai/src/main/cpp/whisper/
+          DEST=ime-ai/src/main/cpp/whisper
+          mkdir -p $DEST
+          # Whisper core
+          cp /tmp/whisper-src/src/whisper.cpp $DEST/
+          cp /tmp/whisper-src/include/whisper.h $DEST/
+          # GGML — preserve directory structure
+          cp -r /tmp/whisper-src/ggml/src/ $DEST/ggml-src/
+          cp -r /tmp/whisper-src/ggml/include/ $DEST/ggml-include/
+          # Remove GPU backends we don't need
+          rm -rf $DEST/ggml-src/ggml-cuda* $DEST/ggml-src/ggml-metal* $DEST/ggml-src/ggml-vulkan* $DEST/ggml-src/ggml-sycl* $DEST/ggml-src/ggml-kompute* $DEST/ggml-src/ggml-rpc* $DEST/ggml-src/ggml-cann* $DEST/ggml-src/ggml-blas*
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
