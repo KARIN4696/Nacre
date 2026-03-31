@@ -36,6 +36,8 @@ android {
                 version = "3.22.1"
             }
         }
+        // When NDK builds libnacre-ai.so, exclude the prebuilt from jniLibs to avoid duplicate
+        sourceSets["main"].jniLibs.setSrcDirs(emptyList<File>())
     }
 }
 
