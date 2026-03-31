@@ -59,6 +59,13 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     // Consecutive error tracking for backoff
     private var consecutiveErrors = 0
 
+    // Deferred commit: hold results during pauses instead of committing immediately.
+    // This prevents text from being fragmented when the user pauses to think.
+    // Text is committed after DEFERRED_COMMIT_DELAY_MS of no new speech,
+    // or immediately when the user taps stop.
+    private var deferredText = StringBuilder()
+    private var deferredCommitRunnable: Runnable? = null
+
     fun isAvailable(): Boolean {
         return SpeechRecognizer.isRecognitionAvailable(service)
     }
@@ -117,6 +124,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         partialStableCount = 0
         lastPartialText = ""
         lastPartialTime = 0L
+        deferredText.clear()
+        cancelDeferredCommit()
 
         startRecognizer()
     }
@@ -321,6 +330,54 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     /**
      * When stopping, commit any remaining uncommitted partial text.
      */
+    // ── Deferred commit ─────────────────────────────────────────────────
+    // Instead of committing each utterance immediately, buffer results and
+    // commit after a pause. This lets the user think mid-sentence without
+    // the text being fragmented. The deferred text is shown as partialText
+    // (preview) until committed.
+
+    private fun cancelDeferredCommit() {
+        deferredCommitRunnable?.let { mainHandler.removeCallbacks(it) }
+        deferredCommitRunnable = null
+    }
+
+    /**
+     * Flush all buffered text to the input field.
+     * Only called on explicit stop — never on a timer.
+     * This is the Typeless model: record forever, commit on user action.
+     */
+    private fun flushDeferredText() {
+        cancelDeferredCommit()
+        val text = deferredText.toString()
+        deferredText.clear()
+        if (text.isBlank()) return
+
+        val withCommas = insertMidSentenceCommas(text)
+        val processed = smartPunctuation(withCommas)
+        service.currentInputConnection?.commitText(processed, 1)
+        committedInSession.append(processed)
+        utteranceCount++
+
+        partialText = ""
+    }
+
+    private fun appendDeferredText(text: String) {
+        if (text.isEmpty()) return
+        val converted = convertVoiceCommands(text)
+        if (deferredText.isNotEmpty()) {
+            // Japanese: no space needed between utterances
+            val lastChar = deferredText.last()
+            val hasJapanese = lastChar.code in 0x3000..0x9FFF || lastChar.code in 0xFF00..0xFFEF
+            if (!hasJapanese && converted.first().code in 0x20..0x7E) {
+                deferredText.append(" ")
+            }
+        }
+        deferredText.append(converted)
+        // Show buffered text as live preview in candidate bar
+        partialText = deferredText.toString()
+        // No timer — text stays in buffer until user taps stop
+    }
+
     private fun commitRemainingPartial() {
         val remaining = if (lastCommittedPartial.isNotEmpty() && lastPartialText.length > lastCommittedPartial.length) {
             lastPartialText.substring(lastCommittedPartial.length)
@@ -783,35 +840,21 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         }
 
         override fun onResults(results: Bundle?) {
-            var text = selectBestResult(results)
+            val text = selectBestResult(results)
 
-            // Apply voice command → symbol conversion before anything else
-            text = convertVoiceCommands(text)
-
-            // If we already streamed partial commits, only commit the remainder
-            if (lastCommittedPartial.isNotEmpty() && text.startsWith(lastCommittedPartial)) {
-                text = text.substring(lastCommittedPartial.length)
-            } else if (lastCommittedPartial.isNotEmpty()) {
-                // Final result differs from partial — the engine corrected itself
-                // Delete the streamed text and recommit the full result
-                val ic = service.currentInputConnection
-                if (ic != null && lastCommittedPartial.isNotEmpty()) {
-                    ic.deleteSurroundingText(lastCommittedPartial.length, 0)
-                    val delStart = (committedInSession.length - lastCommittedPartial.length).coerceAtLeast(0)
-                    if (delStart < committedInSession.length) {
-                        committedInSession.delete(delStart, committedInSession.length)
-                    }
-                }
-            }
-
+            // Commit immediately — each utterance is committed as it arrives.
+            // Continuous mode ensures the recognizer restarts instantly,
+            // so the user can keep talking through pauses.
             if (text.isNotEmpty()) {
-                val spaced = addUtteranceSpacing(text)
+                val converted = convertVoiceCommands(text)
+                val spaced = addUtteranceSpacing(converted)
                 val withCommas = insertMidSentenceCommas(spaced)
                 val processed = smartPunctuation(withCommas)
                 service.currentInputConnection?.commitText(processed, 1)
                 committedInSession.append(processed)
                 utteranceCount++
             }
+
             partialText = ""
             rmsLevel = 0f
             lastCommittedPartial = ""
@@ -819,15 +862,14 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             lastPartialText = ""
             consecutiveErrors = 0
 
-            // Auto-detect language for next utterance based on committed text.
-            // If the user just spoke English, switch to en-US for the next recognition.
-            // If Japanese, switch back to ja-JP. This enables seamless bilingual input.
+            // Auto-detect language for next utterance
             if (text.isNotEmpty()) {
                 val asciiRatio = text.count { it.code in 0x20..0x7E }.toFloat() / text.length
                 currentLanguage = if (asciiRatio > 0.7f) "en-US" else "ja-JP"
             }
 
-            // Zero-gap continuous restart
+            // Zero-gap continuous restart — recognizer restarts instantly
+            // so the user never has to tap again. Silence is fine.
             if (continuousMode && isBatteryOk()) {
                 startRecognizer()
             } else {
@@ -841,11 +883,6 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull() ?: ""
             partialText = text
-
-            // Streaming partial commit for long dictation
-            if (text.length > 10) {
-                tryStreamingCommit(text)
-            }
         }
 
         override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -860,7 +897,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     companion object {
         private const val TAG = "VoiceInput"
         private const val BATTERY_THRESHOLD = 10
-        private const val MAX_CONSECUTIVE_ERRORS = 15 // Generous limit for always-on mode
+        private const val MAX_CONSECUTIVE_ERRORS = 15
+        // No deferred commit timer — Typeless model: commit only on user stop action
         private val RECOVERABLE_ERRORS = setOf(
             SpeechRecognizer.ERROR_NO_MATCH,
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
