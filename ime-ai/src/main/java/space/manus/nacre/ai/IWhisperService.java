@@ -12,6 +12,8 @@ public interface IWhisperService extends android.os.IInterface {
     void unloadModel() throws android.os.RemoteException;
     void startRecognition(String language, IWhisperCallback callback) throws android.os.RemoteException;
     void stopRecognition() throws android.os.RemoteException;
+    void startContinuousRecognition(String language, IWhisperCallback callback) throws RemoteException;
+    void cancelContinuousRecognition() throws RemoteException;
 
     public static class Default implements IWhisperService {
         @Override public boolean isModelLoaded() throws android.os.RemoteException { return false; }
@@ -20,6 +22,8 @@ public interface IWhisperService extends android.os.IInterface {
         @Override public void unloadModel() throws android.os.RemoteException {}
         @Override public void startRecognition(String language, IWhisperCallback callback) throws android.os.RemoteException {}
         @Override public void stopRecognition() throws android.os.RemoteException {}
+        @Override public void startContinuousRecognition(String language, IWhisperCallback callback) throws android.os.RemoteException {}
+        @Override public void cancelContinuousRecognition() throws android.os.RemoteException {}
         @Override public android.os.IBinder asBinder() { return null; }
     }
 
@@ -32,6 +36,8 @@ public interface IWhisperService extends android.os.IInterface {
         static final int TRANSACTION_unloadModel = android.os.IBinder.FIRST_CALL_TRANSACTION + 3;
         static final int TRANSACTION_startRecognition = android.os.IBinder.FIRST_CALL_TRANSACTION + 4;
         static final int TRANSACTION_stopRecognition = android.os.IBinder.FIRST_CALL_TRANSACTION + 5;
+        static final int TRANSACTION_startContinuousRecognition = android.os.IBinder.FIRST_CALL_TRANSACTION + 6;
+        static final int TRANSACTION_cancelContinuousRecognition = android.os.IBinder.FIRST_CALL_TRANSACTION + 7;
 
         public Stub() { this.attachInterface(this, DESCRIPTOR); }
 

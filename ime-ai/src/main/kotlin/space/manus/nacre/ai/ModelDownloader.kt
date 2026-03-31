@@ -60,9 +60,9 @@ class ModelDownloader(private val context: Context) {
     fun getDownloadedModels(): Map<String, Boolean> {
         val dir = getModelsDir()
         return mapOf(
-            "whisper" to File(dir, "whisper-base.bin").exists(),
+            "whisper" to File(dir, WHISPER_FILENAME).exists(),
             "llm" to File(dir, "gemma-3-1b-q4.gguf").exists(),
-            "kenlm" to File(dir, "japanese-5gram.klm").exists(),
+            "kenlm" to File(dir, KENLM_FILENAME).exists(),
         )
     }
 
@@ -204,9 +204,41 @@ class ModelDownloader(private val context: Context) {
         return if (file.exists()) file else null
     }
 
+    /**
+     * Download the Whisper base model (~142MB).
+     * Used for speech-to-text transcription.
+     */
+    fun downloadWhisperBase(onComplete: (Boolean) -> Unit) {
+        downloadModel(
+            url = WHISPER_URL,
+            modelName = "Whisper Base",
+            fileName = WHISPER_FILENAME,
+            onComplete = onComplete,
+        )
+    }
+
+    /**
+     * Get Whisper model path if it exists.
+     * Checks internal storage first, then common download directories.
+     */
+    fun getWhisperModelPath(): String? {
+        val modelFile = File(context.filesDir, "models/$WHISPER_FILENAME")
+        if (modelFile.exists()) return modelFile.absolutePath
+        val downloads = android.os.Environment.getExternalStoragePublicDirectory(
+            android.os.Environment.DIRECTORY_DOWNLOADS
+        )
+        val fallbacks = listOf(
+            File(downloads, "nacre-models/$WHISPER_FILENAME"),
+            File(downloads, WHISPER_FILENAME),
+        )
+        return fallbacks.firstOrNull { it.exists() }?.absolutePath
+    }
+
     companion object {
         private const val TAG = "ModelDownloader"
         const val KENLM_FILENAME = "japanese-5gram.klm"
         const val KENLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/japanese-5gram.klm"
+        const val WHISPER_FILENAME = "ggml-base.bin"
+        const val WHISPER_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/ggml-base.bin"
     }
 }
