@@ -12,8 +12,8 @@ public interface IWhisperService extends android.os.IInterface {
     void unloadModel() throws android.os.RemoteException;
     void startRecognition(String language, IWhisperCallback callback) throws android.os.RemoteException;
     void stopRecognition() throws android.os.RemoteException;
-    void startContinuousRecognition(String language, IWhisperCallback callback) throws RemoteException;
-    void cancelContinuousRecognition() throws RemoteException;
+    void startContinuousRecognition(String language, IWhisperCallback callback) throws android.os.RemoteException;
+    void cancelContinuousRecognition() throws android.os.RemoteException;
 
     public static class Default implements IWhisperService {
         @Override public boolean isModelLoaded() throws android.os.RemoteException { return false; }
