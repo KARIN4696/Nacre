@@ -17,6 +17,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import space.manus.nacre.ai.IWhisperService
+import space.manus.nacre.ai.IWhisperCallback
 import space.manus.nacre.ime.NacreInputMethodService
 
 /**
@@ -58,6 +60,53 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
     // Consecutive error tracking for backoff
     private var consecutiveErrors = 0
+
+    // Whisper continuous mode
+    private var whisperService: IWhisperService? = null
+    private var whisperBound = false
+    private var isWhisperContinuousMode = false
+    private var audioFocusRequest: android.media.AudioFocusRequest? = null
+
+    private val whisperConnection = object : android.content.ServiceConnection {
+        override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
+            whisperService = IWhisperService.Stub.asInterface(binder)
+        }
+        override fun onServiceDisconnected(name: android.content.ComponentName?) {
+            whisperService = null
+            whisperBound = false
+            if (isWhisperContinuousMode) {
+                isWhisperContinuousMode = false
+                startRecognizer()
+            }
+        }
+    }
+
+    private val whisperCallback = object : IWhisperCallback.Stub() {
+        override fun onResult(text: String) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                isWhisperContinuousMode = false
+                releaseAudioFocus()
+                service.currentInputConnection?.finishComposingText()
+                if (text.isNotBlank()) {
+                    service.currentInputConnection?.commitText(text, 1)
+                }
+            }
+        }
+
+        override fun onPartialResult(text: String) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                service.currentInputConnection?.setComposingText(text, 1)
+            }
+        }
+
+        override fun onError(message: String) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                isWhisperContinuousMode = false
+                releaseAudioFocus()
+                startRecognizer()
+            }
+        }
+    }
 
     // Deferred commit: hold results during pauses instead of committing immediately.
     // This prevents text from being fragmented when the user pauses to think.
@@ -126,6 +175,20 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         lastPartialTime = 0L
         deferredText.clear()
         cancelDeferredCommit()
+
+        // Whisper priority — use continuous mode if model loaded
+        if (whisperService != null) {
+            try {
+                if (whisperService!!.isModelLoaded) {
+                    isWhisperContinuousMode = true
+                    requestAudioFocus()
+                    whisperService!!.startContinuousRecognition("auto", whisperCallback)
+                    return
+                }
+            } catch (e: android.os.RemoteException) {
+                // Fall through to SpeechRecognizer
+            }
+        }
 
         startRecognizer()
     }
@@ -204,6 +267,12 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     }
 
     fun stopListening() {
+        if (isWhisperContinuousMode) {
+            try {
+                whisperService?.stopRecognition()
+            } catch (e: android.os.RemoteException) { }
+            return
+        }
         continuousMode = false
         // Commit any remaining partial text
         commitRemainingPartial()
@@ -220,6 +289,15 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     }
 
     fun cancel() {
+        if (isWhisperContinuousMode) {
+            try {
+                whisperService?.cancelContinuousRecognition()
+            } catch (e: android.os.RemoteException) { }
+            isWhisperContinuousMode = false
+            releaseAudioFocus()
+            service.currentInputConnection?.finishComposingText()
+            return
+        }
         continuousMode = false
         try {
             speechRecognizer?.cancel()
@@ -886,6 +964,46 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         }
 
         override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    private fun requestAudioFocus() {
+        val am = service.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        audioFocusRequest = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .build()
+        am.requestAudioFocus(audioFocusRequest!!)
+    }
+
+    private fun releaseAudioFocus() {
+        audioFocusRequest?.let {
+            val am = service.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.abandonAudioFocusRequest(it)
+            audioFocusRequest = null
+        }
+    }
+
+    fun bindWhisperService() {
+        if (whisperBound) return
+        try {
+            val intent = android.content.Intent().apply {
+                setClassName(service.packageName, "space.manus.nacre.ai.WhisperService")
+            }
+            service.bindService(intent, whisperConnection, android.content.Context.BIND_AUTO_CREATE)
+            whisperBound = true
+        } catch (e: Exception) { }
+    }
+
+    fun unbindWhisperService() {
+        if (whisperBound) {
+            service.unbindService(whisperConnection)
+            whisperBound = false
+            whisperService = null
+        }
     }
 
     private fun isBatteryOk(): Boolean {
