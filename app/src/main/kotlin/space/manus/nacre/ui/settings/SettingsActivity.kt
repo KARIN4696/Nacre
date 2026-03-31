@@ -723,6 +723,7 @@ private fun KenLmModelSection() {
                 color = if (nativeOk && modelLoaded) NacreAccent.copy(alpha = 0.7f) else Color(0xFFFF6666),
                 fontSize = 11.sp,
             )
+            // Model loads in IME process — isModelLoaded() here may show ✗ even when working
             Spacer(modifier = Modifier.height(12.dp))
             Button(
                 onClick = { launcher.launch(arrayOf("*/*")) },
