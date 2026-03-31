@@ -144,17 +144,12 @@ class NacreInputMethodService :
                 val fullModel = java.io.File(modelsDir, "japanese-5gram.klm")
                 val compactModel = java.io.File(modelsDir, "japanese-compact.klm")
 
-                // Check external storage for sideloaded full model
-                val externalCandidates = listOf(
-                    java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_DOWNLOADS), "kenlm-light/japanese-5gram.klm"),
-                    java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_DOWNLOADS), "japanese-5gram.klm"),
-                )
-                // Copy full model from external to internal if not yet present
+                // Search for model anywhere on device (Download, Documents, etc.)
                 if (!fullModel.exists()) {
-                    val extSource = externalCandidates.firstOrNull { it.exists() }
-                    if (extSource != null) {
+                    val downloader = space.manus.nacre.ai.ModelDownloader(this)
+                    val foundPath = downloader.getKenLmModelPath()
+                    if (foundPath != null && foundPath != fullModel.absolutePath) {
+                        val extSource = java.io.File(foundPath)
                         android.util.Log.i("NacreIME", "Copying KenLM model from ${extSource.absolutePath}...")
                         extSource.copyTo(fullModel, overwrite = true)
                         android.util.Log.i("NacreIME", "KenLM model copied (${fullModel.length() / 1024 / 1024}MB)")

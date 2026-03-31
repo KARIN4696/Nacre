@@ -219,19 +219,76 @@ class ModelDownloader(private val context: Context) {
 
     /**
      * Get Whisper model path if it exists.
-     * Checks internal storage first, then common download directories.
+     * Searches internal storage, then scans external storage recursively.
      */
-    fun getWhisperModelPath(): String? {
-        val modelFile = File(context.filesDir, "models/$WHISPER_FILENAME")
-        if (modelFile.exists()) return modelFile.absolutePath
+    fun getWhisperModelPath(): String? = findModelFile(WHISPER_FILENAME)
+
+    /**
+     * Get KenLM model path if it exists.
+     * Searches internal storage, then scans external storage recursively.
+     */
+    fun getKenLmModelPath(): String? = findModelFile(KENLM_FILENAME)
+
+    /**
+     * Search for a model file by name.
+     * 1. Internal storage (app models dir)
+     * 2. Common locations (Download, nacre-models)
+     * 3. Recursive scan of /sdcard (breadth-first, max depth 4)
+     */
+    private fun findModelFile(filename: String): String? {
+        // 1. Internal storage
+        val internal = File(context.filesDir, "models/$filename")
+        if (internal.exists()) return internal.absolutePath
+
+        // 2. Common locations (fast check)
+        val sdcard = android.os.Environment.getExternalStorageDirectory()
         val downloads = android.os.Environment.getExternalStoragePublicDirectory(
             android.os.Environment.DIRECTORY_DOWNLOADS
         )
-        val fallbacks = listOf(
-            File(downloads, "nacre-models/$WHISPER_FILENAME"),
-            File(downloads, WHISPER_FILENAME),
+        val quickPaths = listOf(
+            File(downloads, filename),
+            File(downloads, "nacre-models/$filename"),
+            File(sdcard, filename),
+            File(sdcard, "models/$filename"),
+            File(sdcard, "nacre/$filename"),
+            File(sdcard, "Documents/$filename"),
         )
-        return fallbacks.firstOrNull { it.exists() }?.absolutePath
+        val quick = quickPaths.firstOrNull { it.exists() }
+        if (quick != null) {
+            Log.i(TAG, "Found model at ${quick.absolutePath}")
+            return quick.absolutePath
+        }
+
+        // 3. Recursive scan (breadth-first, max depth 4, skip hidden/Android dirs)
+        try {
+            val found = scanForFile(sdcard, filename, maxDepth = 4)
+            if (found != null) {
+                Log.i(TAG, "Found model via scan at ${found.absolutePath}")
+                return found.absolutePath
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Model scan failed", e)
+        }
+
+        return null
+    }
+
+    private fun scanForFile(root: File, filename: String, maxDepth: Int): File? {
+        if (maxDepth <= 0 || !root.isDirectory) return null
+        val skipDirs = setOf("Android", ".thumbnails", ".cache", "cache", "DCIM", "Pictures", "Music", "Ringtones", "Alarms", "Notifications")
+        val children = root.listFiles() ?: return null
+        // Check files first
+        for (f in children) {
+            if (f.isFile && f.name == filename) return f
+        }
+        // Then recurse into subdirectories
+        for (f in children) {
+            if (f.isDirectory && f.name !in skipDirs && !f.name.startsWith(".")) {
+                val found = scanForFile(f, filename, maxDepth - 1)
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     companion object {
