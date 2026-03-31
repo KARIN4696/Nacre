@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.os.RemoteException
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 
 /**
  * Whisper speech-to-text service.
@@ -25,6 +26,14 @@ class WhisperService : Service() {
     @Volatile
     private var isRecognizing = false
     private var recordJob: Job? = null
+
+    // Continuous recording state
+    private var transcriptionChannel = Channel<FloatArray>(Channel.BUFFERED)
+    private var recordingJob: Job? = null
+    private var transcriptionJob: Job? = null
+    private val textBuffer = StringBuilder()
+    private val postProcessor = PostProcessor()
+    private var continuousCallback: IWhisperCallback? = null
 
     private val binder = object : IWhisperService.Stub() {
 
@@ -80,9 +89,138 @@ class WhisperService : Service() {
         }
 
         override fun stopRecognition() {
+            // If continuous mode is active, finalize it
+            if (recordingJob != null) {
+                scope.launch {
+                    recordingJob?.cancel()
+                    recordingJob = null
+                    transcriptionChannel.close()
+                    transcriptionJob?.join()
+                    transcriptionJob = null
+                    continuousCallback?.onResult(textBuffer.toString())
+                    continuousCallback = null
+                }
+                return
+            }
             recordJob?.cancel()
             this@WhisperService.isRecognizing = false
         }
+
+        override fun startContinuousRecognition(language: String, callback: IWhisperCallback) {
+            if (!WhisperJni.isModelLoaded()) {
+                callback.onError("Model not loaded")
+                return
+            }
+            continuousCallback = callback
+            textBuffer.clear()
+            transcriptionChannel = Channel(Channel.BUFFERED)
+
+            // Recording coroutine
+            recordingJob = scope.launch(Dispatchers.Default) {
+                val bufferSize = android.media.AudioRecord.getMinBufferSize(
+                    SAMPLE_RATE,
+                    android.media.AudioFormat.CHANNEL_IN_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_FLOAT
+                )
+                val recorder = android.media.AudioRecord(
+                    android.media.MediaRecorder.AudioSource.MIC,
+                    SAMPLE_RATE,
+                    android.media.AudioFormat.CHANNEL_IN_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_FLOAT,
+                    bufferSize * 2
+                )
+                recorder.startRecording()
+
+                val chunkSamples = SAMPLE_RATE * CHUNK_SIZE_MS / 1000
+                val readBuffer = FloatArray(chunkSamples)
+                val audioBuffer = mutableListOf<Float>()
+                var silentChunks = 0
+                val silentChunksThreshold = (CHUNK_SILENCE_THRESHOLD_SEC * 1000 / CHUNK_SIZE_MS).toInt()
+                val maxChunks = CONTINUOUS_MAX_DURATION_SEC * 1000 / CHUNK_SIZE_MS
+                var totalChunks = 0
+
+                try {
+                    while (isActive && totalChunks < maxChunks) {
+                        val read = recorder.read(readBuffer, 0, chunkSamples, android.media.AudioRecord.READ_BLOCKING)
+                        if (read <= 0) continue
+                        totalChunks++
+
+                        var sum = 0.0
+                        for (i in 0 until read) { sum += readBuffer[i] * readBuffer[i] }
+                        val rms = Math.sqrt(sum / read).toFloat()
+
+                        if (rms < VAD_RMS_THRESHOLD) {
+                            silentChunks++
+                            if (silentChunks >= silentChunksThreshold && audioBuffer.isNotEmpty()) {
+                                transcriptionChannel.send(audioBuffer.toFloatArray())
+                                audioBuffer.clear()
+                                silentChunks = 0
+                            }
+                        } else {
+                            silentChunks = 0
+                            for (i in 0 until read) { audioBuffer.add(readBuffer[i]) }
+                        }
+                    }
+                    if (audioBuffer.isNotEmpty()) {
+                        transcriptionChannel.send(audioBuffer.toFloatArray())
+                    }
+                } finally {
+                    recorder.stop()
+                    recorder.release()
+                    transcriptionChannel.close()
+                }
+            }
+
+            // Transcription coroutine
+            transcriptionJob = scope.launch(Dispatchers.Default) {
+                for (chunkAudio in transcriptionChannel) {
+                    if (!isActive) break
+                    try {
+                        val rawText = WhisperJni.transcribe(chunkAudio, language)
+                        if (rawText.isBlank()) continue
+                        val result = postProcessor.process(rawText)
+                        if (result.command != null) {
+                            when (result.command) {
+                                VoiceCommand.NewLine -> textBuffer.append("\n")
+                                VoiceCommand.Period -> {
+                                    if (textBuffer.isNotEmpty() && textBuffer.last() != '。' && textBuffer.last() != '.') {
+                                        val hasJa = textBuffer.any { it.code in 0x3000..0x9FFF }
+                                        textBuffer.append(if (hasJa) "。" else ".")
+                                    }
+                                }
+                                VoiceCommand.Undo -> {
+                                    val lastBreak = textBuffer.lastIndexOfAny(charArrayOf('。', '.', '\n'))
+                                    if (lastBreak >= 0) textBuffer.delete(lastBreak, textBuffer.length)
+                                    else textBuffer.clear()
+                                }
+                                VoiceCommand.Commit -> {
+                                    continuousCallback?.onResult(textBuffer.toString())
+                                    stopContinuousRecordingInternal()
+                                    return@launch
+                                }
+                            }
+                        } else if (result.text.isNotBlank()) {
+                            textBuffer.append(result.text)
+                        }
+                        continuousCallback?.onPartialResult(textBuffer.toString())
+                    } catch (e: Exception) {
+                        android.util.Log.e("WhisperService", "Transcription error", e)
+                    }
+                }
+            }
+        }
+
+        override fun cancelContinuousRecognition() {
+            stopContinuousRecordingInternal()
+            textBuffer.clear()
+        }
+    }
+
+    private fun stopContinuousRecordingInternal() {
+        recordingJob?.cancel()
+        recordingJob = null
+        transcriptionJob?.cancel()
+        transcriptionJob = null
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -215,11 +353,17 @@ class WhisperService : Service() {
 
     override fun onDestroy() {
         recordJob?.cancel()
+        stopContinuousRecordingInternal()
         scope.cancel()
         super.onDestroy()
     }
 
     companion object {
         private const val TAG = "WhisperService"
+        private const val CONTINUOUS_MAX_DURATION_SEC = 360 // 6 minutes
+        private const val CHUNK_SILENCE_THRESHOLD_SEC = 1.5f
+        private const val VAD_RMS_THRESHOLD = 0.005f
+        private const val SAMPLE_RATE = 16000
+        private const val CHUNK_SIZE_MS = 250
     }
 }
