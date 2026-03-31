@@ -67,8 +67,8 @@ fun FlickInputPad(service: NacreInputMethodService) {
             .fillMaxWidth()
             .background(bgColor),
     ) {
-        // Toolbar (idle) or CandidateBar (composing)
-        ToolbarOrCandidateBar(service = service)
+        // Candidate bar only (no toolbar — functions covered by grid keys)
+        CandidateBar(service = service)
 
         // Grid: switches based on flickMode
         when (flickMode) {
