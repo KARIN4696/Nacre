@@ -94,6 +94,20 @@ public interface IWhisperService extends android.os.IInterface {
                     reply.writeNoException();
                     return true;
                 }
+                case TRANSACTION_startContinuousRecognition: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String _arg0 = data.readString();
+                    IWhisperCallback _arg1 = IWhisperCallback.Stub.asInterface(data.readStrongBinder());
+                    this.startContinuousRecognition(_arg0, _arg1);
+                    reply.writeNoException();
+                    return true;
+                }
+                case TRANSACTION_cancelContinuousRecognition: {
+                    data.enforceInterface(DESCRIPTOR);
+                    this.cancelContinuousRecognition();
+                    reply.writeNoException();
+                    return true;
+                }
             }
             return super.onTransact(code, data, reply, flags);
         }
@@ -172,6 +186,36 @@ public interface IWhisperService extends android.os.IInterface {
                     mRemote.transact(TRANSACTION_stopRecognition, _data, _reply, 0);
                     _reply.readException();
                 } finally { _reply.recycle(); _data.recycle(); }
+            }
+
+            @Override
+            public void startContinuousRecognition(String language, IWhisperCallback callback) throws android.os.RemoteException {
+                android.os.Parcel _data = android.os.Parcel.obtain();
+                android.os.Parcel _reply = android.os.Parcel.obtain();
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(language);
+                    _data.writeStrongBinder(callback != null ? callback.asBinder() : null);
+                    mRemote.transact(Stub.TRANSACTION_startContinuousRecognition, _data, _reply, 0);
+                    _reply.readException();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+            }
+
+            @Override
+            public void cancelContinuousRecognition() throws android.os.RemoteException {
+                android.os.Parcel _data = android.os.Parcel.obtain();
+                android.os.Parcel _reply = android.os.Parcel.obtain();
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    mRemote.transact(Stub.TRANSACTION_cancelContinuousRecognition, _data, _reply, 0);
+                    _reply.readException();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
             }
         }
     }
