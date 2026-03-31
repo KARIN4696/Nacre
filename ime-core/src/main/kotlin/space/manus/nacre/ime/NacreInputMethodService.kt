@@ -137,37 +137,61 @@ class NacreInputMethodService :
                 inputEngine.refreshPredictionsIfNeeded()
             }
 
-            // Lazy-load KenLM model if available
+            // Load KenLM model: prefer full 5-gram (sideloaded), fall back to bundled compact model
             try {
-                val internalModel = java.io.File(filesDir, "models/japanese-5gram.klm")
-                // Also check external storage (for sideloading without root)
+                val modelsDir = java.io.File(filesDir, "models")
+                modelsDir.mkdirs()
+                val fullModel = java.io.File(modelsDir, "japanese-5gram.klm")
+                val compactModel = java.io.File(modelsDir, "japanese-compact.klm")
+
+                // Check external storage for sideloaded full model
                 val externalCandidates = listOf(
                     java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
                         android.os.Environment.DIRECTORY_DOWNLOADS), "kenlm-light/japanese-5gram.klm"),
                     java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
                         android.os.Environment.DIRECTORY_DOWNLOADS), "japanese-5gram.klm"),
                 )
-                // Copy from external to internal if not yet present
-                if (!internalModel.exists()) {
+                // Copy full model from external to internal if not yet present
+                if (!fullModel.exists()) {
                     val extSource = externalCandidates.firstOrNull { it.exists() }
                     if (extSource != null) {
                         android.util.Log.i("NacreIME", "Copying KenLM model from ${extSource.absolutePath}...")
-                        internalModel.parentFile?.mkdirs()
-                        extSource.copyTo(internalModel, overwrite = true)
-                        android.util.Log.i("NacreIME", "KenLM model copied to internal storage (${internalModel.length() / 1024 / 1024}MB)")
+                        extSource.copyTo(fullModel, overwrite = true)
+                        android.util.Log.i("NacreIME", "KenLM model copied (${fullModel.length() / 1024 / 1024}MB)")
                     }
                 }
-                if (internalModel.exists()) {
+
+                // Extract bundled compact model from assets if no full model and compact not yet extracted
+                if (!fullModel.exists() && !compactModel.exists()) {
+                    try {
+                        assets.open("models/japanese-compact.klm").use { input ->
+                            compactModel.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        android.util.Log.i("NacreIME", "Bundled compact KenLM extracted (${compactModel.length() / 1024 / 1024}MB)")
+                    } catch (_: Exception) {
+                        android.util.Log.i("NacreIME", "No bundled compact KenLM model in assets")
+                    }
+                }
+
+                // Load the best available model: full > compact
+                val modelToLoad = when {
+                    fullModel.exists() -> fullModel
+                    compactModel.exists() -> compactModel
+                    else -> null
+                }
+                if (modelToLoad != null) {
                     val scorer = KenLmScorer()
-                    if (scorer.load(internalModel.absolutePath)) {
+                    if (scorer.load(modelToLoad.absolutePath)) {
                         dict.kenLmScorer = scorer
-                        android.util.Log.i("NacreIME", "KenLM model loaded: ${internalModel.name}")
+                        android.util.Log.i("NacreIME", "KenLM loaded: ${modelToLoad.name} (${modelToLoad.length() / 1024 / 1024}MB)")
                     }
                 } else {
-                    android.util.Log.i("NacreIME", "KenLM model not found (optional)")
+                    android.util.Log.i("NacreIME", "No KenLM model available (conversion quality will be limited)")
                 }
             } catch (e: Exception) {
-                android.util.Log.w("NacreIME", "KenLM load failed (optional)", e)
+                android.util.Log.w("NacreIME", "KenLM load failed", e)
             }
         }
     }

@@ -100,8 +100,25 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         loadMozcDictionary()
         loadSlangDictionary()
         loadSupplementaryDict("dict/common_phrases.tsv", "common phrases")
+        loadSupplementaryDict("dict/person_names.tsv", "person names")
         loadSupplementaryDict("dict/emoji_kaomoji.tsv", "emoji/kaomoji")
         loadSupplementaryDict("dict/symbols.tsv", "symbols")
+
+        // Boost person name entries: Mozc defaults are too high (median ~6500)
+        // Reduce by 1500 to make names more competitive with common nouns
+        var namesBoosted = 0
+        for (entries in dict.values) {
+            for (i in entries.indices) {
+                val e = entries[i]
+                if (e.leftGroup in 1921..1923 && e.cost > 3500) {
+                    entries[i] = e.copy(cost = e.cost - 1500)
+                    namesBoosted++
+                }
+            }
+        }
+        if (namesBoosted > 0) {
+            Log.i("NacreDictionary", "Boosted $namesBoosted person name entries (cost -1500)")
+        }
 
         // Sort all entries and build index ONCE after all dicts loaded (avoids OOM from repeated sorts)
         for (entries in dict.values) {

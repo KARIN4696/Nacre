@@ -137,9 +137,10 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             // Offline preference disabled — causes ERROR_NO_MATCH on devices
             // without offline model downloaded. Let the engine decide.
             // putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Silence tolerance — generous but within engine limits
-            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 5000L)
-            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 3000L)
+            // Silence tolerance — maximized for always-on dictation
+            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 10000L)
+            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 5000L)
+            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 500L)
             // Web search bias off (better for natural language)
             putExtra(RecognizerIntent.EXTRA_WEB_SEARCH_ONLY, false)
         }
@@ -502,31 +503,55 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         val hasJapanese = text.any { it.code in 0x3000..0x9FFF || it.code in 0xFF00..0xFFEF }
 
         if (hasJapanese) {
-            // 疑問パターン（明確なケース）
-            if (text.endsWith("ですか") || text.endsWith("ますか") ||
-                text.endsWith("でしょうか") || text.endsWith("かな") ||
-                text.endsWith("だろうか") || text.endsWith("じゃないか") ||
-                text.endsWith("じゃない") || text.endsWith("なの") ||
-                text.endsWith("のか") || text.endsWith("かね") ||
-                text.endsWith("かしら") || text.endsWith("だっけ") ||
-                text.endsWith("ないか") || text.endsWith("ませんか") ||
-                text.endsWith("でしょう") || text.endsWith("だろう") ||
-                text.endsWith("よね") || text.endsWith("だよね") ||
-                text.endsWith("ですよね") || text.endsWith("でしたっけ") ||
-                text.endsWith("って何") || text.endsWith("ってなに") ||
-                text.endsWith("とは") ||
+            // 疑問パターン（80+ patterns for comprehensive coverage）
+            val questionEndings = arrayOf(
+                // 丁寧語
+                "ですか", "ますか", "ませんか", "でしょうか", "でしたか",
+                "ございますか", "いただけますか", "くださいますか",
+                // 確認系
+                "よね", "だよね", "ですよね", "じゃない", "じゃないですか",
+                "でしたっけ", "だっけ", "ではないですか", "ではありませんか",
+                // カジュアル
+                "かな", "かね", "かしら", "だろうか", "だろう", "でしょう",
+                "じゃん", "なの", "のか",
+                // 疑問詞で始まるフレーズの末尾
+                "って何", "ってなに", "ってなんですか", "とは", "ってどういうこと",
+                "ってこと", "ということ", "の意味", "ってどうなった",
+                // 動詞疑問
+                "できる", "できますか", "してくれる", "してもらえる",
+                "知ってる", "知っていますか", "分かる", "わかりますか",
+                "ある", "ありますか", "いる", "いますか",
+                // 比較・選択
+                "どっち", "どちら", "どれ", "どこ", "どう", "いつ", "なぜ",
+                "どうして", "なんで", "いくら", "いくつ", "どのくらい",
+                "何人", "何日", "何時",
+            )
+            // Check longest matches first to avoid partial matches
+            if (questionEndings.sortedByDescending { it.length }.any { text.endsWith(it) } ||
                 (text.endsWith("か") && text.length > 2) ||
                 (text.endsWith("の") && text.length > 4)
             ) {
                 return "$text？"
             }
-            // 感嘆パターン（明確なケース）
-            if (text.endsWith("すごい") || text.endsWith("やばい") ||
-                text.endsWith("ください") || text.endsWith("だろ") ||
-                text.endsWith("するな") || text.endsWith("するぞ") ||
-                text.endsWith("やれ") || text.endsWith("しろ") ||
-                text.endsWith("しなさい") || text.endsWith("ないで")
-            ) {
+            // 感嘆パターン
+            val exclamationEndings = arrayOf(
+                // 命令・依頼
+                "ください", "くれ", "しろ", "しなさい", "やれ", "やめろ", "やめて",
+                "ないで", "するな", "するぞ", "してくれ", "やってくれ",
+                "頑張れ", "気をつけて", "お願い",
+                // 感情
+                "すごい", "すげー", "やばい", "やべー", "最高", "最悪",
+                "うれしい", "嬉しい", "楽しい", "悲しい", "つらい", "辛い",
+                "びっくり", "信じられない", "ありえない",
+                // 完了・成功
+                "やった", "できた", "終わった", "勝った", "成功",
+                // 肯定強調
+                "だろ", "だぜ", "だぞ", "だよ", "ぞ", "よ", "ね",
+                "まじ", "マジ", "本当",
+                // 挨拶系
+                "ありがとう", "おめでとう", "お疲れ", "いいね",
+            )
+            if (exclamationEndings.sortedByDescending { it.length }.any { text.endsWith(it) }) {
                 return "$text！"
             }
 
@@ -565,6 +590,43 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             }
             return "$text."
         }
+    }
+
+    /**
+     * Insert commas (、) at natural clause boundaries within Japanese text.
+     * Targets conjunctive particles and connectives that typically precede a pause.
+     */
+    private fun insertMidSentenceCommas(text: String): String {
+        if (text.length < 8) return text // Too short for mid-sentence commas
+        val hasJapanese = text.any { it.code in 0x3000..0x9FFF || it.code in 0xFF00..0xFFEF }
+        if (!hasJapanese) return text
+
+        var result = text
+        // Clause-boundary patterns: insert 、 after these conjunctive forms
+        // Only insert if not already followed by punctuation
+        val clauseBreaks = listOf(
+            "ので" to "ので、", "から" to "から、", "けど" to "けど、",
+            "けれど" to "けれど、", "けれども" to "けれども、",
+            "ですが" to "ですが、", "ますが" to "ますが、",
+            "たら" to "たら、", "ても" to "ても、", "のに" to "のに、",
+            "ながら" to "ながら、", "つつ" to "つつ、",
+            "そして" to "そして、", "しかし" to "しかし、",
+            "でも" to "でも、", "ただ" to "ただ、", "また" to "また、",
+            "さらに" to "さらに、", "それから" to "それから、",
+            "ところが" to "ところが、", "一方" to "一方、",
+            "なので" to "なので、", "だから" to "だから、",
+        )
+        for ((pattern, replacement) in clauseBreaks) {
+            // Only replace if pattern is followed by non-punctuation content
+            val idx = result.indexOf(pattern)
+            if (idx >= 0) {
+                val afterIdx = idx + pattern.length
+                if (afterIdx < result.length && result[afterIdx] !in "。、！？「」『』（）・…\n、") {
+                    result = result.substring(0, afterIdx) + "、" + result.substring(afterIdx)
+                }
+            }
+        }
+        return result
     }
 
     private fun addUtteranceSpacing(text: String): String {
@@ -667,30 +729,41 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "認識エンジンビジー"
                 else -> "エラー ($error)"
             }
-            Log.w(TAG, "Recognition error: $msg (code=$error, consecutive=$consecutiveErrors)")
 
-            consecutiveErrors++
+            // Silence errors (NO_MATCH, SPEECH_TIMEOUT) are normal in always-on mode
+            // — don't count them toward the consecutive error limit
+            val isSilenceError = error == SpeechRecognizer.ERROR_NO_MATCH ||
+                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+            if (!isSilenceError) {
+                consecutiveErrors++
+            }
+            Log.w(TAG, "Recognition error: $msg (code=$error, consecutive=$consecutiveErrors, silence=$isSilenceError)")
 
             // In continuous mode, auto-restart on recoverable errors
             if (continuousMode && error in RECOVERABLE_ERRORS) {
-                // Always show error so user knows what's happening
-                lastError = msg
                 partialText = ""
                 rmsLevel = 0f
+                // Only show error for non-silence errors (don't spam the user)
+                if (!isSilenceError) {
+                    lastError = msg
+                }
 
-                // Give up after too many consecutive errors
-                if (consecutiveErrors > 5) {
+                // Give up after too many consecutive real errors
+                if (consecutiveErrors > MAX_CONSECUTIVE_ERRORS) {
                     Log.w(TAG, "Too many consecutive errors ($consecutiveErrors), stopping")
                     lastError = msg
-                    partialText = ""
-                    rmsLevel = 0f
                     isListening = false
                     continuousMode = false
                     return
                 }
 
-                // Exponential backoff: 100ms, 200ms, 400ms, 800ms, ...
-                val delay = (100L * (1 shl (consecutiveErrors - 1).coerceAtMost(4)))
+                // Silence errors: restart immediately (always-on behavior)
+                // Real errors: exponential backoff
+                val delay = if (isSilenceError) {
+                    50L // Near-instant restart for silence — Typeless-style always-on
+                } else {
+                    (100L * (1 shl (consecutiveErrors - 1).coerceAtMost(4)))
+                }
 
                 mainHandler.postDelayed({
                     if (continuousMode && isBatteryOk()) {
@@ -733,7 +806,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
             if (text.isNotEmpty()) {
                 val spaced = addUtteranceSpacing(text)
-                val processed = smartPunctuation(spaced)
+                val withCommas = insertMidSentenceCommas(spaced)
+                val processed = smartPunctuation(withCommas)
                 service.currentInputConnection?.commitText(processed, 1)
                 committedInSession.append(processed)
                 utteranceCount++
@@ -785,7 +859,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
     companion object {
         private const val TAG = "VoiceInput"
-        private const val BATTERY_THRESHOLD = 10 // Lower threshold — voice input is lightweight
+        private const val BATTERY_THRESHOLD = 10
+        private const val MAX_CONSECUTIVE_ERRORS = 15 // Generous limit for always-on mode
         private val RECOVERABLE_ERRORS = setOf(
             SpeechRecognizer.ERROR_NO_MATCH,
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT,

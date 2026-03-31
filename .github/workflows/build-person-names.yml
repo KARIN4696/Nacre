@@ -1,0 +1,153 @@
+name: Build Person Name Dictionary from JMnedict
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download JMnedict
+        run: |
+          wget -q http://ftp.edrdg.org/pub/Nihongo/JMnedict.xml.gz
+          ls -lh JMnedict.xml.gz
+
+      - name: Parse and convert to Nacre TSV format
+        run: |
+          python3 << 'PYEOF'
+          import gzip
+          import xml.etree.ElementTree as ET
+          import re
+
+          # JMnedict name_type codes for person names
+          PERSON_TYPES = {'surname', 'given', 'fem', 'masc', 'person', 'unclass'}
+
+          # Mozc POS IDs for person names
+          POS_MAP = {
+              'surname': (1923, 1923),  # 姓
+              'given': (1922, 1922),     # 名
+              'fem': (1922, 1922),       # 女性名
+              'masc': (1922, 1922),      # 男性名
+              'person': (1921, 1921),    # フルネーム
+              'unclass': (1921, 1921),   # 未分類
+          }
+
+          # Cost by type: lower = more likely to appear
+          COST_MAP = {
+              'surname': 4500,   # 姓は高頻度
+              'given': 5000,     # 名前
+              'fem': 5200,
+              'masc': 5200,
+              'person': 4000,    # フルネーム（有名人）
+              'unclass': 5500,
+          }
+
+          entries = []
+          seen = set()
+
+          with gzip.open('JMnedict.xml.gz', 'rt', encoding='utf-8') as f:
+              tree = ET.iterparse(f, events=('end',))
+              for event, elem in tree:
+                  if elem.tag == 'entry':
+                      # Extract readings (katakana)
+                      readings = []
+                      for r_ele in elem.findall('r_ele'):
+                          reb = r_ele.find('reb')
+                          if reb is not None and reb.text:
+                              readings.append(reb.text)
+
+                      # Extract kanji writings
+                      surfaces = []
+                      for k_ele in elem.findall('k_ele'):
+                          keb = k_ele.find('keb')
+                          if keb is not None and keb.text:
+                              surfaces.append(keb.text)
+
+                      # Extract name types from trans
+                      name_types = set()
+                      for trans in elem.findall('trans'):
+                          for nt in trans.findall('name_type'):
+                              if nt.text:
+                                  # Extract type from entity reference
+                                  t = nt.text.strip('&;').replace('&', '')
+                                  if t in PERSON_TYPES:
+                                      name_types.add(t)
+
+                      if name_types and readings:
+                          # Determine best type for POS/cost
+                          best_type = 'unclass'
+                          for t in ['person', 'surname', 'given', 'fem', 'masc']:
+                              if t in name_types:
+                                  best_type = t
+                                  break
+
+                          left_id, right_id = POS_MAP[best_type]
+                          cost = COST_MAP[best_type]
+
+                          # Convert katakana readings to hiragana for dictionary key
+                          for reading_kata in readings:
+                              reading = ''
+                              for ch in reading_kata:
+                                  if '\u30A1' <= ch <= '\u30F6':
+                                      reading += chr(ord(ch) - 0x60)
+                                  elif ch == '\u30F7':  # ヷ
+                                      reading += 'わ'
+                                  elif ch == '\u30F4':  # ヴ
+                                      reading += 'ゔ'
+                                  elif ch == '\u30FC':  # ー
+                                      reading += 'ー'
+                                  else:
+                                      reading += ch
+
+                              if not reading:
+                                  continue
+
+                              # Add kanji surfaces
+                              for surface in surfaces:
+                                  key = f'{reading}\t{surface}'
+                                  if key not in seen:
+                                      seen.add(key)
+                                      entries.append(f'{reading}\t{surface}\t{left_id}\t{right_id}\t{cost}')
+
+                              # Add katakana surface too
+                              key = f'{reading}\t{reading_kata}'
+                              if key not in seen:
+                                  seen.add(key)
+                                  entries.append(f'{reading}\t{reading_kata}\t{left_id}\t{right_id}\t{cost + 500}')
+
+                      elem.clear()
+
+          # Sort by reading for binary search compatibility
+          entries.sort()
+
+          with open('person_names.tsv', 'w', encoding='utf-8') as f:
+              f.write('# Person name dictionary generated from JMnedict (CC-BY-SA 3.0)\n')
+              f.write(f'# Entries: {len(entries)}\n')
+              f.write('# Format: reading\\tsurface\\tleft_id\\tright_id\\tcost\n')
+              for entry in entries:
+                  f.write(entry + '\n')
+
+          print(f'Generated {len(entries)} person name entries')
+          PYEOF
+
+          wc -l person_names.tsv
+          ls -lh person_names.tsv
+          head -20 person_names.tsv
+
+      - name: Compress dictionary
+        run: |
+          gzip -k person_names.tsv
+          ls -lh person_names.tsv.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: person-names-dict
+          path: |
+            person_names.tsv
+            person_names.tsv.gz
+          retention-days: 90
