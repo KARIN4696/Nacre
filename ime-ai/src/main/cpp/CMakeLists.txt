@@ -14,6 +14,11 @@ if(EXISTS "${WHISPER_DIR}/whisper.cpp")
     list(FILTER WHISPER_C_SRCS   EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc|cann|blas|amx)")
     list(FILTER WHISPER_CPP_SRCS EXCLUDE REGEX "ggml-(cuda|metal|vulkan|sycl|kompute|rpc|cann|blas|amx)")
 
+    # Add subdirectory sources needed by ggml-cpu (relative includes: "amx/amx.h", "llamafile/sgemm.h")
+    if(EXISTS "${WHISPER_DIR}/llamafile/sgemm.cpp")
+        list(APPEND WHISPER_CPP_SRCS "${WHISPER_DIR}/llamafile/sgemm.cpp")
+    endif()
+
     add_library(whisper_lib STATIC
         ${WHISPER_CPP_SRCS}
         ${WHISPER_C_SRCS}

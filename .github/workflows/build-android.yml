@@ -60,7 +60,17 @@ jobs:
           cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu-aarch64.cpp  ime-ai/src/main/cpp/whisper/
           cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu-traits.cpp   ime-ai/src/main/cpp/whisper/
           cp /tmp/whisper-src/ggml/src/ggml-cpu/ggml-cpu-hbm.cpp      ime-ai/src/main/cpp/whisper/
-          cp /tmp/whisper-src/ggml/src/ggml-cpu/llamafile/sgemm.cpp   ime-ai/src/main/cpp/whisper/
+          # ggml-cpu subdirectories needed for relative includes
+          mkdir -p ime-ai/src/main/cpp/whisper/amx
+          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/amx.h     ime-ai/src/main/cpp/whisper/amx/
+          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/amx.cpp   ime-ai/src/main/cpp/whisper/amx/
+          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/common.h  ime-ai/src/main/cpp/whisper/amx/
+          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/mmq.h     ime-ai/src/main/cpp/whisper/amx/
+          cp /tmp/whisper-src/ggml/src/ggml-cpu/amx/mmq.cpp   ime-ai/src/main/cpp/whisper/amx/
+
+          mkdir -p ime-ai/src/main/cpp/whisper/llamafile
+          cp /tmp/whisper-src/ggml/src/ggml-cpu/llamafile/sgemm.cpp ime-ai/src/main/cpp/whisper/llamafile/
+          cp /tmp/whisper-src/ggml/src/ggml-cpu/llamafile/sgemm.h   ime-ai/src/main/cpp/whisper/llamafile/
 
           # ggml headers (public + internal — needed by CPU sources)
           cp /tmp/whisper-src/ggml/include/*.h       ime-ai/src/main/cpp/whisper/
