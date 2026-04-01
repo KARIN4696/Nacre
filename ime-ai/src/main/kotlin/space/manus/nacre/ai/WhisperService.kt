@@ -101,6 +101,8 @@ class WhisperService : Service() {
                     transcriptionChannel.close()
                     transcriptionJob?.join()
                     transcriptionJob = null
+                    this@WhisperService.isRecognizing = false
+                    try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
                     continuousCallback?.onResult(textBuffer.toString())
                     continuousCallback = null
                 }
@@ -111,6 +113,11 @@ class WhisperService : Service() {
         }
 
         override fun startContinuousRecognition(language: String, callback: IWhisperCallback) {
+            // Guard against double-start
+            if (this@WhisperService.isRecognizing) {
+                try { callback.onError("Already recognizing") } catch (_: RemoteException) {}
+                return
+            }
             if (!WhisperJni.isModelLoaded()) {
                 callback.onError("Model not loaded")
                 return
@@ -140,7 +147,7 @@ class WhisperService : Service() {
             this@WhisperService.isRecognizing = true
             continuousCallback = callback
             textBuffer.clear()
-            transcriptionChannel = Channel(Channel.BUFFERED)
+            transcriptionChannel = Channel(Channel.UNLIMITED)
 
             // Recording coroutine
             recordingJob = scope.launch(Dispatchers.Default) {
@@ -169,23 +176,31 @@ class WhisperService : Service() {
                 try {
                     while (isActive && totalChunks < maxChunks) {
                         val read = recorder.read(readBuffer, 0, chunkSamples, android.media.AudioRecord.READ_BLOCKING)
-                        if (read <= 0) continue
+                        if (read < 0) {
+                            Log.e(TAG, "AudioRecord.read() error: $read")
+                            break
+                        }
+                        if (read == 0) continue
                         totalChunks++
 
                         var sum = 0.0
                         for (i in 0 until read) { sum += readBuffer[i] * readBuffer[i] }
                         val rms = Math.sqrt(sum / read).toFloat()
 
+                        // Always accumulate audio (including silence — Whisper needs natural pauses)
+                        for (i in 0 until read) { audioBuffer.add(readBuffer[i]) }
+
                         if (rms < VAD_RMS_THRESHOLD) {
                             silentChunks++
-                            if (silentChunks >= silentChunksThreshold && audioBuffer.isNotEmpty()) {
-                                transcriptionChannel.send(audioBuffer.toFloatArray())
-                                audioBuffer.clear()
+                            if (silentChunks >= silentChunksThreshold) {
+                                if (audioBuffer.isNotEmpty()) {
+                                    transcriptionChannel.send(audioBuffer.toFloatArray())
+                                    audioBuffer.clear()
+                                }
                                 silentChunks = 0
                             }
                         } else {
                             silentChunks = 0
-                            for (i in 0 until read) { audioBuffer.add(readBuffer[i]) }
                         }
                     }
                     if (audioBuffer.isNotEmpty()) {

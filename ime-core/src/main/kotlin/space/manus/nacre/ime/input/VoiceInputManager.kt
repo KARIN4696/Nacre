@@ -335,9 +335,16 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
     fun stopListening() {
         if (isWhisperContinuousMode) {
+            // Reset state synchronously (callback will commit text asynchronously)
+            isWhisperContinuousMode = false
+            isListening = false
+            rmsLevel = 0f
+            releaseAudioFocus()
             try {
                 whisperService?.stopRecognition()
-            } catch (e: android.os.RemoteException) { }
+            } catch (e: android.os.RemoteException) {
+                Log.w(TAG, "Whisper stopRecognition IPC failed", e)
+            }
             return
         }
         continuousMode = false
