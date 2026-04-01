@@ -50,6 +50,17 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     private val recentHistory = java.util.LinkedList<ConversionCandidate>()
     private val maxHistory = 200
 
+    // User dictionary: reading → surface, registered by user (custom words, names, etc.)
+    private val userDictionary = ConcurrentHashMap<String, MutableList<UserDictEntry>>(100)
+
+    // Phrase memory: committed multi-word phrases for phrase completion
+    // Key: first 2 chars of reading, Value: list of phrase entries
+    private val phraseMemory = ConcurrentHashMap<String, MutableList<PhraseEntry>>(200)
+    private val maxPhrases = 500
+
+    // Learning epoch: increments each session, used for frequency decay
+    private var learningEpoch: Int = 0
+
     // Static bigram data: "prevSurface→nextReading:nextSurface" → boost value
     private val staticBigrams = HashMap<String, Int>(2000)
 
@@ -93,6 +104,19 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         val rightGroup: Int = 1,  // POS group for right context
     )
 
+    data class UserDictEntry(
+        val reading: String,
+        val surface: String,
+        val comment: String = "",  // Optional user memo (e.g. "work address")
+    )
+
+    data class PhraseEntry(
+        val reading: String,       // Full hiragana reading
+        val surface: String,       // Full committed surface text
+        var count: Int = 1,        // Times this phrase was committed
+        var lastEpoch: Int = 0,    // Last epoch when this phrase was used
+    )
+
     fun load() {
         if (loaded) return
 
@@ -132,6 +156,16 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         loadEnglishFullDict()
         loadStaticBigrams()
         loadUserBoost()
+        loadUserDictionary()
+        loadPhraseMemory()
+
+        // Inject user dictionary entries into the main dict for conversion
+        injectUserDictionary()
+
+        // Increment learning epoch and apply frequency decay
+        learningEpoch++
+        applyFrequencyDecay()
+        saveEpoch()
 
         loaded = true
     }
@@ -403,11 +437,19 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
-        // 5. Katakana / Hiragana as-is (boost katakana for loanword-heavy readings)
+        // 5. Katakana / Hiragana / Half-width katakana as-is
         val katakana = hiraganaToKatakana(kana)
         if (katakana != kana && seen.add(katakana)) {
             val katakanaCost = estimateKatakanaCost(kana, results)
             results.add(ConversionCandidate(surface = katakana, reading = kana, cost = katakanaCost))
+        }
+        // Half-width katakana (e.g. for older systems, game text, stylistic use)
+        if (kana.length >= 2) {
+            val halfKatakana = toHalfWidthKatakana(kana)
+            if (halfKatakana != kana && halfKatakana != katakana && seen.add(halfKatakana)) {
+                val maxCost = results.maxOfOrNull { it.cost } ?: 5000
+                results.add(ConversionCandidate(surface = halfKatakana, reading = kana, cost = maxCost + 800))
+            }
         }
         if (seen.add(kana)) {
             val maxCost = results.maxOfOrNull { it.cost } ?: 5000
@@ -534,12 +576,17 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             addUnique(typoCorrection(kana, limit = 5))
         }
 
-        // 8. Always ensure katakana and hiragana as-is candidates exist
+        // 8. Always ensure katakana, half-width katakana, and hiragana as-is candidates exist
         if (kana.length >= 2) {
             val katakana = hiraganaToKatakana(kana)
             if (katakana != kana && seen.add(katakana)) {
                 val katakanaCost = estimateKatakanaCost(kana, results)
                 results.add(ConversionCandidate(surface = katakana, reading = kana, cost = katakanaCost))
+            }
+            val halfKatakana = toHalfWidthKatakana(kana)
+            if (halfKatakana != kana && halfKatakana != katakana && seen.add(halfKatakana)) {
+                val maxCost = results.maxOfOrNull { it.cost } ?: 5000
+                results.add(ConversionCandidate(surface = halfKatakana, reading = kana, cost = maxCost + 800))
             }
             if (seen.add(kana)) {
                 val maxCost = results.maxOfOrNull { it.cost } ?: 5000
@@ -599,8 +646,9 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
     }
 
     /**
-     * Predict next word based on committed context (bigram/trigram history).
-     * Returns candidates that frequently follow the last committed word(s).
+     * Predict next word based on committed context.
+     * Uses trigram/bigram history, static bigrams, POS-based common followers,
+     * and KenLM scoring for ranking.
      */
     fun predictNextWord(limit: Int = 8): List<ConversionCandidate> {
         if (lastCommittedSurface.isEmpty()) return emptyList()
@@ -629,7 +677,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
-        // 2. Bigram matches: prev1→X
+        // 2. Bigram matches (user learned): prev1→X
         val biPrefix = "$lastCommittedSurface→"
         for ((key, count) in bigramBoost) {
             if (key.startsWith(biPrefix) && count > 0) {
@@ -648,7 +696,39 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
-        // 3. Recent history (fallback)
+        // 3. Static bigram matches (common collocations from bigrams.tsv)
+        if (results.size < limit) {
+            for ((key, boost) in staticBigrams) {
+                if (key.startsWith(biPrefix)) {
+                    val target = key.removePrefix(biPrefix)
+                    val parts = target.split(':', limit = 2)
+                    if (parts.size == 2) {
+                        val surface = parts[1]
+                        if (seen.add(surface)) {
+                            results.add(ConversionCandidate(
+                                surface = surface,
+                                reading = parts[0],
+                                cost = maxOf(1000, 5000 - boost),
+                            ))
+                        }
+                    }
+                    if (results.size >= limit * 2) break
+                }
+            }
+        }
+
+        // 4. POS-based common followers: if last word was a verb, suggest particles etc.
+        if (results.size < limit) {
+            val commonFollowers = getCommonFollowersForContext()
+            for (follower in commonFollowers) {
+                if (seen.add(follower.surface)) {
+                    results.add(follower)
+                    if (results.size >= limit * 2) break
+                }
+            }
+        }
+
+        // 5. Recent history (fallback)
         if (results.size < limit) {
             for (h in recentHistory) {
                 if (seen.add(h.surface) && h.surface != lastCommittedSurface) {
@@ -658,7 +738,62 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             }
         }
 
+        // 6. KenLM rescoring for all next-word predictions
+        if (results.size > 1) {
+            kenLmRescore(results)
+        }
+
         return results.sortedBy { it.cost }.take(limit)
+    }
+
+    /**
+     * Generate common follow-up word candidates based on POS context.
+     * E.g., after a noun suggest particles (は、が、を、の、に、で、と、も、から、まで).
+     * After a verb suggest auxiliary verbs and conjunctions.
+     */
+    private fun getCommonFollowersForContext(): List<ConversionCandidate> {
+        val results = mutableListOf<ConversionCandidate>()
+
+        // Common particles/auxiliary patterns based on last word POS
+        val isLastNoun = isNoun(lastRightGroup) || lastRightGroup == 0
+        val isLastVerb = isVerb(lastRightGroup)
+        val isLastAdj = isAdjective(lastRightGroup)
+        val isLastParticle = isParticle(lastRightGroup)
+
+        if (isLastNoun) {
+            // After noun: particles
+            val particles = listOf(
+                "は" to "は", "が" to "が", "を" to "を", "の" to "の",
+                "に" to "に", "で" to "で", "と" to "と", "も" to "も",
+                "から" to "から", "まで" to "まで", "って" to "って",
+                "です" to "です", "だ" to "だ",
+            )
+            for ((reading, surface) in particles) {
+                results.add(ConversionCandidate(surface = surface, reading = reading, cost = 4500))
+            }
+        } else if (isLastVerb || isLastAdj) {
+            // After verb/adjective: auxiliaries and conjunctions
+            val followers = listOf(
+                "こと" to "こと", "の" to "の", "ため" to "ため",
+                "ので" to "ので", "から" to "から", "けど" to "けど",
+                "が" to "が", "と" to "と", "ので" to "ので",
+            )
+            for ((reading, surface) in followers) {
+                results.add(ConversionCandidate(surface = surface, reading = reading, cost = 4800))
+            }
+        } else if (isLastParticle) {
+            // After particle: likely a content word follows — use recent nouns/verbs
+            for (h in recentHistory) {
+                val entries = dict[h.reading]
+                val entry = entries?.firstOrNull { it.surface == h.surface }
+                if (entry != null && isContentWord(entry.leftGroup)) {
+                    results.add(h.copy(cost = 5200))
+                    if (results.size >= 5) break
+                }
+            }
+        }
+
+        return results
     }
 
     private fun debouncedSave() {
@@ -773,7 +908,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             c.segments.ifEmpty { listOf(c.surface) }
         }
 
-        val scores = scorer.scoreBatch(segmentLists, precedingContext)
+        val scores = scorer.scoreBatchNormalized(segmentLists, precedingContext)
 
         // Dynamic KenLM weight: longer input = more context = higher trust in LM
         // Short (1-3 chars): weight 1800 — dict cost is more reliable
@@ -1418,6 +1553,27 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         fun isConjunction(id: Int) = id in 2591..2593
         fun isInterjection(id: Int) = id in 2589..2590
         fun isSymbol(id: Int) = id in 2641..2656
+
+        // Full-width katakana -> half-width katakana mapping
+        private val HALF_WIDTH_KATAKANA_MAP = mapOf(
+            'ァ' to "ｧ", 'ア' to "ｱ", 'ィ' to "ｨ", 'イ' to "ｲ", 'ゥ' to "ｩ",
+            'ウ' to "ｳ", 'ェ' to "ｪ", 'エ' to "ｴ", 'ォ' to "ｫ", 'オ' to "ｵ",
+            'カ' to "ｶ", 'キ' to "ｷ", 'ク' to "ｸ", 'ケ' to "ｹ", 'コ' to "ｺ",
+            'サ' to "ｻ", 'シ' to "ｼ", 'ス' to "ｽ", 'セ' to "ｾ", 'ソ' to "ｿ",
+            'タ' to "ﾀ", 'チ' to "ﾁ", 'ツ' to "ﾂ", 'テ' to "ﾃ", 'ト' to "ﾄ",
+            'ナ' to "ﾅ", 'ニ' to "ﾆ", 'ヌ' to "ﾇ", 'ネ' to "ﾈ", 'ノ' to "ﾉ",
+            'ハ' to "ﾊ", 'ヒ' to "ﾋ", 'フ' to "ﾌ", 'ヘ' to "ﾍ", 'ホ' to "ﾎ",
+            'マ' to "ﾏ", 'ミ' to "ﾐ", 'ム' to "ﾑ", 'メ' to "ﾒ", 'モ' to "ﾓ",
+            'ヤ' to "ﾔ", 'ュ' to "ｭ", 'ユ' to "ﾕ", 'ョ' to "ｮ", 'ヨ' to "ﾖ",
+            'ラ' to "ﾗ", 'リ' to "ﾘ", 'ル' to "ﾙ", 'レ' to "ﾚ", 'ロ' to "ﾛ",
+            'ワ' to "ﾜ", 'ヲ' to "ｦ", 'ン' to "ﾝ",
+            'ガ' to "ｶﾞ", 'ギ' to "ｷﾞ", 'グ' to "ｸﾞ", 'ゲ' to "ｹﾞ", 'ゴ' to "ｺﾞ",
+            'ザ' to "ｻﾞ", 'ジ' to "ｼﾞ", 'ズ' to "ｽﾞ", 'ゼ' to "ｾﾞ", 'ゾ' to "ｿﾞ",
+            'ダ' to "ﾀﾞ", 'ヂ' to "ﾁﾞ", 'ヅ' to "ﾂﾞ", 'デ' to "ﾃﾞ", 'ド' to "ﾄﾞ",
+            'バ' to "ﾊﾞ", 'ビ' to "ﾋﾞ", 'ブ' to "ﾌﾞ", 'ベ' to "ﾍﾞ", 'ボ' to "ﾎﾞ",
+            'パ' to "ﾊﾟ", 'ピ' to "ﾋﾟ", 'プ' to "ﾌﾟ", 'ペ' to "ﾍﾟ", 'ポ' to "ﾎﾟ",
+            'ッ' to "ｯ", 'ャ' to "ｬ", 'ー' to "ｰ", 'ヴ' to "ｳﾞ",
+        )
     }
 
     private fun lengthBonus(segLen: Int): Int {
@@ -1710,6 +1866,22 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         return sb.toString()
     }
 
+    /** Convert hiragana to half-width katakana (半角カタカナ) */
+    private fun toHalfWidthKatakana(hiragana: String): String {
+        val sb = StringBuilder(hiragana.length * 2) // dakuten can expand
+        for (ch in hiragana) {
+            val kata = if (ch in '\u3041'..'\u3096') (ch + 0x60) else ch
+            val hw = HALF_WIDTH_KATAKANA_MAP[kata]
+            if (hw != null) {
+                sb.append(hw)
+            } else {
+                sb.append(kata)
+            }
+        }
+        return sb.toString()
+    }
+
+
     // --- User learning persistence ---
 
     private fun loadUserBoost() {
@@ -1796,6 +1968,205 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 .apply()
         } catch (e: Exception) {
             Log.w("NacreDictionary", "Failed to save user boost", e)
+        }
+    }
+
+    // --- User dictionary persistence ---
+
+    private fun loadUserDictionary() {
+        try {
+            val prefs = context.getSharedPreferences("nacre_user_dict", Context.MODE_PRIVATE)
+            val data = prefs.getString("user_dictionary", null) ?: return
+            for (line in data.split('\n')) {
+                if (line.isBlank()) continue
+                val parts = line.split('\t')
+                if (parts.size >= 2) {
+                    val reading = parts[0]
+                    val surface = parts[1]
+                    val comment = if (parts.size >= 3) parts[2] else ""
+                    userDictionary.getOrPut(reading) { mutableListOf() }
+                        .add(UserDictEntry(reading, surface, comment))
+                }
+            }
+            Log.i("NacreDictionary", "User dictionary loaded: ${userDictionary.values.sumOf { it.size }} entries")
+        } catch (e: Exception) {
+            Log.w("NacreDictionary", "Failed to load user dictionary", e)
+        }
+    }
+
+    private fun saveUserDictionary() {
+        try {
+            val prefs = context.getSharedPreferences("nacre_user_dict", Context.MODE_PRIVATE)
+            val data = userDictionary.values.flatten()
+                .joinToString("\n") { "${it.reading}\t${it.surface}\t${it.comment}" }
+            prefs.edit().putString("user_dictionary", data).apply()
+        } catch (e: Exception) {
+            Log.w("NacreDictionary", "Failed to save user dictionary", e)
+        }
+    }
+
+    /**
+     * Inject user dictionary entries into the main dict so they appear in conversion candidates.
+     * User entries get a high priority (low cost).
+     */
+    private fun injectUserDictionary() {
+        for ((reading, entries) in userDictionary) {
+            val existing = dict.getOrPut(reading) { mutableListOf() }
+            for (entry in entries) {
+                if (existing.none { it.surface == entry.surface }) {
+                    existing.add(DictEntry(
+                        surface = entry.surface,
+                        cost = 500, // High priority — user registered words
+                        leftGroup = 0,
+                        rightGroup = 0,
+                    ))
+                }
+            }
+        }
+    }
+
+    /**
+     * Register a word in the user dictionary.
+     * @param reading hiragana reading
+     * @param surface the kanji/text surface form
+     * @param comment optional memo
+     */
+    fun registerUserWord(reading: String, surface: String, comment: String = "") {
+        val entries = userDictionary.getOrPut(reading) { mutableListOf() }
+        if (entries.none { it.surface == surface }) {
+            entries.add(UserDictEntry(reading, surface, comment))
+            // Also inject into the live dict
+            val existing = dict.getOrPut(reading) { mutableListOf() }
+            if (existing.none { it.surface == surface }) {
+                existing.add(DictEntry(surface = surface, cost = 500, leftGroup = 0, rightGroup = 0))
+            }
+            saveUserDictionary()
+        }
+    }
+
+    /**
+     * Remove a word from the user dictionary.
+     */
+    fun removeUserWord(reading: String, surface: String) {
+        userDictionary[reading]?.removeAll { it.surface == surface }
+        if (userDictionary[reading]?.isEmpty() == true) userDictionary.remove(reading)
+        dict[reading]?.removeAll { it.surface == surface && it.cost == 500 }
+        saveUserDictionary()
+    }
+
+    // --- Phrase memory persistence ---
+
+    private fun loadPhraseMemory() {
+        try {
+            val prefs = context.getSharedPreferences("nacre_user_dict", Context.MODE_PRIVATE)
+            val data = prefs.getString("phrase_memory", null) ?: return
+            for (line in data.split('\n')) {
+                if (line.isBlank()) continue
+                val parts = line.split('\t')
+                if (parts.size >= 3) {
+                    val reading = parts[0]
+                    val surface = parts[1]
+                    val count = parts[2].toIntOrNull() ?: 1
+                    val epoch = if (parts.size >= 4) parts[3].toIntOrNull() ?: 0 else 0
+                    val key = reading.take(2)
+                    phraseMemory.getOrPut(key) { mutableListOf() }
+                        .add(PhraseEntry(reading, surface, count, epoch))
+                }
+            }
+            Log.i("NacreDictionary", "Phrase memory loaded: ${phraseMemory.values.sumOf { it.size }} phrases")
+        } catch (e: Exception) {
+            Log.w("NacreDictionary", "Failed to load phrase memory", e)
+        }
+    }
+
+    private fun savePhraseMemory() {
+        try {
+            val prefs = context.getSharedPreferences("nacre_user_dict", Context.MODE_PRIVATE)
+            val data = phraseMemory.values.flatten()
+                .sortedByDescending { it.count }
+                .take(maxPhrases)
+                .joinToString("\n") { "${it.reading}\t${it.surface}\t${it.count}\t${it.lastEpoch}" }
+            prefs.edit().putString("phrase_memory", data).apply()
+        } catch (e: Exception) {
+            Log.w("NacreDictionary", "Failed to save phrase memory", e)
+        }
+    }
+
+    /**
+     * Record a committed phrase for phrase completion.
+     * Only stores phrases of 4+ characters (shorter ones are handled by normal learning).
+     */
+    fun recordPhrase(reading: String, surface: String) {
+        if (surface.length < 4) return
+        val key = reading.take(2)
+        val entries = phraseMemory.getOrPut(key) { mutableListOf() }
+        val existing = entries.find { it.surface == surface }
+        if (existing != null) {
+            existing.count++
+            existing.lastEpoch = learningEpoch
+        } else {
+            entries.add(PhraseEntry(reading, surface, 1, learningEpoch))
+            // Evict oldest if over limit
+            if (entries.size > 50) {
+                entries.sortByDescending { it.count }
+                while (entries.size > 40) entries.removeAt(entries.lastIndex)
+            }
+        }
+        savePhraseMemory()
+    }
+
+    /**
+     * Look up phrase completions for a partial reading.
+     * Returns phrases whose reading starts with the given prefix.
+     */
+    fun findPhraseCompletions(readingPrefix: String, limit: Int = 5): List<ConversionCandidate> {
+        if (readingPrefix.length < 2) return emptyList()
+        val key = readingPrefix.take(2)
+        val entries = phraseMemory[key] ?: return emptyList()
+        return entries
+            .filter { it.reading.startsWith(readingPrefix) && it.reading.length > readingPrefix.length }
+            .sortedByDescending { it.count }
+            .take(limit)
+            .map { ConversionCandidate(surface = it.surface, reading = it.reading, cost = 100) }
+    }
+
+    // --- Frequency decay ---
+
+    /**
+     * Apply frequency decay to user boost scores.
+     * Scores decay by 10% each epoch (session), preventing stale entries from dominating.
+     */
+    private fun applyFrequencyDecay() {
+        val decayFactor = 0.9f
+        val iterator = userBoost.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            val decayed = (entry.value * decayFactor).toInt()
+            if (decayed <= 0) {
+                iterator.remove()
+            } else {
+                entry.setValue(decayed)
+            }
+        }
+        // Also decay bigram/trigram boosts
+        for (map in listOf(bigramBoost, trigramBoost)) {
+            val iter = map.entries.iterator()
+            while (iter.hasNext()) {
+                val entry = iter.next()
+                val decayed = (entry.value * decayFactor).toInt()
+                if (decayed <= 0) iter.remove()
+                else entry.setValue(decayed)
+            }
+        }
+    }
+
+    private fun saveEpoch() {
+        try {
+            val prefs = context.getSharedPreferences("nacre_user_dict", Context.MODE_PRIVATE)
+            learningEpoch = prefs.getInt("learning_epoch", 0) + 1
+            prefs.edit().putInt("learning_epoch", learningEpoch).apply()
+        } catch (e: Exception) {
+            Log.w("NacreDictionary", "Failed to save epoch", e)
         }
     }
 }

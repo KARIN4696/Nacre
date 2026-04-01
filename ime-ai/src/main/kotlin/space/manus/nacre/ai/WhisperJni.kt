@@ -35,8 +35,20 @@ object WhisperJni {
     /**
      * Transcribe audio samples to text.
      * @param audioData PCM float32 samples at 16kHz mono
-     * @param language BCP-47 language code (e.g. "ja", "en")
+     * @param language BCP-47 language code (e.g. "ja", "en", "auto")
      * @return transcribed text
      */
     external fun transcribe(audioData: FloatArray, language: String): String
+
+    /**
+     * Transcribe audio samples with context priming via initial_prompt.
+     * The initial_prompt provides context from previously transcribed text,
+     * helping Whisper maintain coherence across chunks.
+     *
+     * @param audioData PCM float32 samples at 16kHz mono
+     * @param language BCP-47 language code (e.g. "ja", "en", "auto")
+     * @param initialPrompt previous text context (max ~200 chars recommended)
+     * @return transcribed text
+     */
+    external fun transcribeWithContext(audioData: FloatArray, language: String, initialPrompt: String): String
 }

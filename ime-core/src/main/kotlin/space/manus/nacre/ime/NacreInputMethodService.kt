@@ -283,6 +283,11 @@ class NacreInputMethodService :
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // Cancel voice input when switching to a new text field — the InputConnection
+        // changes, so composing text from the previous field would be lost.
+        if (voiceInputManager.isListening && !restarting) {
+            voiceInputManager.cancel()
+        }
         // Reload theme & config each time keyboard appears (picks up settings changes)
         currentTheme = space.manus.nacre.config.ThemeProvider.loadSelectedTheme(this)
         inputEngine.onStartInput(info)
@@ -300,6 +305,12 @@ class NacreInputMethodService :
 
     override fun onWindowHidden() {
         super.onWindowHidden()
+        // Stop voice input when keyboard is hidden (e.g., user switches apps).
+        // Without this, Whisper continues recording in the background with no UI,
+        // and the InputConnection becomes stale so composing text cannot be updated.
+        if (voiceInputManager.isListening) {
+            voiceInputManager.cancel()
+        }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
     }
 

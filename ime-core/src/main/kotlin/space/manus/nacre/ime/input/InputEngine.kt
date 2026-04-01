@@ -808,6 +808,7 @@ class InputEngine(private val service: NacreInputMethodService) {
         composingFlickKana = ""
         lastFlickKeyId = ""
         lastFlickTapTime = 0L
+        lastFlickTapCycle = null
     }
 
     // Symbol candidate state: when non-null, tapping a candidate replaces the last committed symbol
@@ -931,6 +932,7 @@ class InputEngine(private val service: NacreInputMethodService) {
     // Track last flick tap for toggle input (ガラケー打ち)
     private var lastFlickKeyId: String = ""
     private var lastFlickTapTime: Long = 0L
+    private var lastFlickTapCycle: List<String>? = null
     private val TOGGLE_TIMEOUT_MS = 800L // Time window for toggle input
 
     /**
@@ -938,7 +940,12 @@ class InputEngine(private val service: NacreInputMethodService) {
      * Supports toggle input (ガラケー打ち): rapidly tapping the same key
      * cycles through its kana variants (あ→い→う→え→お→あ...).
      */
-    fun processFlickKana(kana: String, flickKeyId: String = "", isFlickTap: Boolean = false) {
+    fun processFlickKana(
+        kana: String,
+        flickKeyId: String = "",
+        isFlickTap: Boolean = false,
+        tapCycleOverride: List<String>? = null,
+    ) {
         val ic = service.currentInputConnection ?: return
         if (isConverting) commitSelectedCandidate(ic)
 
@@ -949,10 +956,13 @@ class InputEngine(private val service: NacreInputMethodService) {
             && (now - lastFlickTapTime) < TOGGLE_TIMEOUT_MS
             && composingFlickKana.isNotEmpty()
         ) {
-            // Find the FlickKey and cycle through its characters
+            // Build tap cycle: prefer override, then stored cycle, then FlickKey.tapCycle, then flick directions
             val flickKey = FlickEngine.kanaKeys.find { it.id == flickKeyId }
-            if (flickKey != null) {
-                val cycle = listOfNotNull(flickKey.tap, flickKey.left, flickKey.up, flickKey.right, flickKey.down)
+            val cycle = tapCycleOverride
+                ?: lastFlickTapCycle
+                ?: flickKey?.tapCycle
+                ?: flickKey?.let { listOfNotNull(it.tap, it.left, it.up, it.right, it.down) }
+            if (cycle != null && cycle.isNotEmpty()) {
                 val lastChar = composingFlickKana.last().toString()
                 val currentIndex = cycle.indexOf(lastChar)
                 val nextIndex = if (currentIndex >= 0) (currentIndex + 1) % cycle.size else 0
@@ -971,6 +981,7 @@ class InputEngine(private val service: NacreInputMethodService) {
         if (isFlickTap && flickKeyId != lastFlickKeyId) {
             lastFlickKeyId = ""
             lastFlickTapTime = 0L
+            lastFlickTapCycle = null
         }
 
         // Normal input (flick or first tap)
@@ -982,9 +993,11 @@ class InputEngine(private val service: NacreInputMethodService) {
         if (isFlickTap) {
             lastFlickKeyId = flickKeyId
             lastFlickTapTime = now
+            lastFlickTapCycle = tapCycleOverride
         } else {
             lastFlickKeyId = ""
             lastFlickTapTime = 0L
+            lastFlickTapCycle = null
         }
     }
 
@@ -995,6 +1008,7 @@ class InputEngine(private val service: NacreInputMethodService) {
     fun confirmFlickToggle() {
         lastFlickKeyId = ""
         lastFlickTapTime = 0L
+        lastFlickTapCycle = null
     }
 
     /**

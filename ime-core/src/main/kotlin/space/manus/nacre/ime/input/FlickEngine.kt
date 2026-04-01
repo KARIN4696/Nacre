@@ -16,19 +16,25 @@ object FlickEngine {
         val up: String? = null,
         val right: String? = null,
         val down: String? = null,
+        /** Full tap-cycle list. If null, cycle is built from tap/left/up/right/down. */
+        val tapCycle: List<String>? = null,
     )
 
     val kanaKeys: List<FlickKey> = listOf(
-        FlickKey("あ", "あ", "あ", "い", "う", "え", "お"),
+        FlickKey("あ", "あ", "あ", "い", "う", "え", "お",
+            tapCycle = listOf("あ", "い", "う", "え", "お", "ぁ", "ぃ", "ぅ", "ぇ", "ぉ")),
         FlickKey("か", "か", "か", "き", "く", "け", "こ"),
         FlickKey("さ", "さ", "さ", "し", "す", "せ", "そ"),
-        FlickKey("た", "た", "た", "ち", "つ", "て", "と"),
+        FlickKey("た", "た", "た", "ち", "つ", "て", "と",
+            tapCycle = listOf("た", "ち", "つ", "て", "と", "っ")),
         FlickKey("な", "な", "な", "に", "ぬ", "ね", "の"),
         FlickKey("は", "は", "は", "ひ", "ふ", "へ", "ほ"),
         FlickKey("ま", "ま", "ま", "み", "む", "め", "も"),
-        FlickKey("や", "や", "や", "ゆ", "よ", "（", "）"),
+        FlickKey("や", "や", "や", "ゆ", "よ", "（", "）",
+            tapCycle = listOf("や", "ゆ", "よ", "ゃ", "ゅ", "ょ")),
         FlickKey("ら", "ら", "ら", "り", "る", "れ", "ろ"),
-        FlickKey("わ", "わ", "わ", "を", "ん", "ー", "〜"),
+        FlickKey("わ", "わ", "わ", "を", "ん", "ー", "〜",
+            tapCycle = listOf("わ", "を", "ん", "ー")),
     )
 
     data class SymbolFlickKey(

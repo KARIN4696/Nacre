@@ -122,6 +122,7 @@ private fun FlickKanaGrid(
     val punctKey = FlickEngine.FlickKey(
         id = "punct", label = "、。",
         tap = "、", left = "。", up = "？", right = "！", down = "…",
+        tapCycle = listOf("。", "、", "！", "？", "ー", "〜", "…", "「", "」", "・"),
     )
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -537,7 +538,12 @@ private fun FlickKeyView(
                             service.layerManager.toggleShift() // auto-reset after one char
                         }
                         val isTap = resolved == FlickEngine.Direction.Tap
-                        service.inputEngine.processFlickKana(kana, flickKeyId = flickKey.id, isFlickTap = isTap)
+                        service.inputEngine.processFlickKana(
+                            kana,
+                            flickKeyId = flickKey.id,
+                            isFlickTap = isTap,
+                            tapCycleOverride = flickKey.tapCycle,
+                        )
                         service.feedbackManager.onKeyPress(KeyAction.Text(kana))
                         lighting.onKeyPress(flickKey.id, column)
                     }

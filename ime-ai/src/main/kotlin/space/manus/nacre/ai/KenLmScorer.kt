@@ -94,11 +94,32 @@ class KenLmScorer {
         return Pair(score, outState)
     }
 
+    /**
+     * Score multiple candidates and return per-word normalized scores.
+     * Normalization: score / numWords — prevents penalizing longer candidates.
+     * @return FloatArray of normalized log10 probability scores
+     */
+    fun scoreBatchNormalized(candidates: List<List<String>>, precedingContext: String = ""): FloatArray {
+        if (!isReady()) return FloatArray(candidates.size) { 0f }
+        val sentences = candidates.map { buildSentence(it, precedingContext) }.toTypedArray()
+        val rawScores = KenLmJni.scoreBatch(sentences)
+        return FloatArray(rawScores.size) { i ->
+            val wordCount = candidates[i].size.coerceAtLeast(1)
+            rawScores[i] / wordCount  // Per-word normalized score
+        }
+    }
+
     private fun buildSentence(segments: List<String>, precedingContext: String): String {
         return buildString {
             if (precedingContext.isNotEmpty()) {
-                append(precedingContext.takeLast(20))
-                append(" ")
+                // For 5-gram model, keep up to 4 preceding words (space-separated)
+                // This preserves full n-gram context rather than truncating by char count
+                val contextWords = precedingContext.trim().split(" ")
+                val keepWords = contextWords.takeLast(4)
+                if (keepWords.isNotEmpty()) {
+                    append(keepWords.joinToString(" "))
+                    append(" ")
+                }
             }
             append(segments.joinToString(" "))
         }

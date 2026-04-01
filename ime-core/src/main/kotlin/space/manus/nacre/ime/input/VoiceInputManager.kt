@@ -70,6 +70,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     private val whisperConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
             val svc = IWhisperService.Stub.asInterface(binder)
+            whisperBound = true  // Track reconnections (BIND_AUTO_CREATE may rebind)
             Log.i(TAG, "WhisperService onServiceConnected")
             // Load model in background, set whisperService only when ready
             Thread {
@@ -124,11 +125,23 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             }.start()
         }
         override fun onServiceDisconnected(name: android.content.ComponentName?) {
+            Log.w(TAG, "WhisperService disconnected unexpectedly")
             whisperService = null
             whisperBound = false
             if (isWhisperContinuousMode) {
                 isWhisperContinuousMode = false
-                startRecognizer()
+                // Clear composing text left from the dead Whisper session
+                mainHandler.post {
+                    service.currentInputConnection?.finishComposingText()
+                    partialText = ""
+                    rmsLevel = 0f
+                    releaseAudioFocus()
+                    // Fallback to SpeechRecognizer if still listening
+                    if (isListening) {
+                        Log.i(TAG, "Falling back to SpeechRecognizer after Whisper disconnect")
+                        startRecognizer()
+                    }
+                }
             }
         }
     }
@@ -335,16 +348,23 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
     fun stopListening() {
         if (isWhisperContinuousMode) {
-            // Reset state synchronously (callback will commit text asynchronously)
+            // Stop recognition first (while audio focus is still held),
+            // then reset state. The callback will commit final text asynchronously.
             isWhisperContinuousMode = false
             isListening = false
+            partialText = ""
             rmsLevel = 0f
-            releaseAudioFocus()
             try {
                 whisperService?.stopRecognition()
             } catch (e: android.os.RemoteException) {
                 Log.w(TAG, "Whisper stopRecognition IPC failed", e)
+                // IPC failed — service may be dead. Commit composing text locally
+                // so user doesn't lose what was shown as composing preview.
+                service.currentInputConnection?.finishComposingText()
             }
+            // Release audio focus AFTER stopRecognition IPC — recording may still be
+            // finishing in the remote process; releasing focus early could inject noise.
+            releaseAudioFocus()
             return
         }
         continuousMode = false
@@ -366,8 +386,13 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         if (isWhisperContinuousMode) {
             try {
                 whisperService?.cancelContinuousRecognition()
-            } catch (e: android.os.RemoteException) { }
+            } catch (e: android.os.RemoteException) {
+                Log.w(TAG, "Whisper cancelContinuousRecognition IPC failed", e)
+            }
             isWhisperContinuousMode = false
+            isListening = false
+            partialText = ""
+            rmsLevel = 0f
             releaseAudioFocus()
             service.currentInputConnection?.finishComposingText()
             return

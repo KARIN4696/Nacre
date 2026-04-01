@@ -70,6 +70,55 @@ Java_space_manus_nacre_ai_WhisperJni_isModelLoaded(JNIEnv*, jobject) {
     return g_model_loaded ? JNI_TRUE : JNI_FALSE;
 }
 
+/**
+ * Configure whisper_full_params with quality-optimized settings for Japanese/English.
+ */
+#ifdef WHISPER_AVAILABLE
+static void configure_quality_params(struct whisper_full_params& params, const char* lang, const char* initial_prompt) {
+    // Language: "auto" enables auto-detection
+    params.language = (lang != nullptr && strlen(lang) > 0) ? lang : "auto";
+
+    // Threading: 4 threads optimal for Snapdragon 8 Gen 3 big cores
+    params.n_threads = 4;
+
+    // Timestamps off — reduces overhead for streaming chunks
+    params.no_timestamps = true;
+
+    // Single segment for short chunks (typical voice input chunks are 1-5s)
+    params.single_segment = true;
+
+    // Suppress blank segments — reduces hallucination on near-silence
+    params.suppress_blank = true;
+
+    // Temperature 0.0 = greedy decoding (deterministic, fastest)
+    params.temperature = 0.0f;
+    // Disable temperature fallback (no need since greedy is deterministic)
+    params.temperature_inc = 0.0f;
+
+    // Entropy threshold: skip segments with high entropy (likely noise/hallucination)
+    // Default is 2.4; lower = stricter filtering
+    params.entropy_thold = 2.4f;
+
+    // Log probability threshold: skip segments with low average log probability
+    // Default is -1.0; higher = stricter filtering
+    params.logprob_thold = -1.0f;
+
+    // No context from previous decode (we handle context via initial_prompt)
+    params.no_context = true;
+
+    // Context priming: pass previous text to maintain coherence across chunks
+    if (initial_prompt != nullptr && strlen(initial_prompt) > 0) {
+        params.initial_prompt = initial_prompt;
+    }
+
+    // Suppress printing
+    params.print_special = false;
+    params.print_progress = false;
+    params.print_realtime = false;
+    params.print_timestamps = false;
+}
+#endif
+
 JNIEXPORT jstring JNICALL
 Java_space_manus_nacre_ai_WhisperJni_transcribe(JNIEnv* env, jobject, jfloatArray audio_data, jstring language) {
 #ifdef WHISPER_AVAILABLE
@@ -85,15 +134,7 @@ Java_space_manus_nacre_ai_WhisperJni_transcribe(JNIEnv* env, jobject, jfloatArra
     const char* lang = env->GetStringUTFChars(language, nullptr);
 
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    // Set language - "auto" enables auto-detection
-    params.language = (lang != nullptr && strlen(lang) > 0) ? lang : "auto";
-    params.n_threads = 4;
-    params.no_timestamps = true;
-    params.single_segment = true;
-    params.print_special = false;
-    params.print_progress = false;
-    params.print_realtime = false;
-    params.print_timestamps = false;
+    configure_quality_params(params, lang, nullptr);
 
     int result = whisper_full(g_ctx, params, data, len);
 
@@ -112,6 +153,48 @@ Java_space_manus_nacre_ai_WhisperJni_transcribe(JNIEnv* env, jobject, jfloatArra
     }
 
     LOGI("Transcription: %s", text.c_str());
+    return env->NewStringUTF(text.c_str());
+#else
+    return env->NewStringUTF("");
+#endif
+}
+
+JNIEXPORT jstring JNICALL
+Java_space_manus_nacre_ai_WhisperJni_transcribeWithContext(JNIEnv* env, jobject, jfloatArray audio_data, jstring language, jstring initial_prompt) {
+#ifdef WHISPER_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    if (!g_ctx) {
+        return env->NewStringUTF("");
+    }
+
+    jsize len = env->GetArrayLength(audio_data);
+    jfloat* data = env->GetFloatArrayElements(audio_data, nullptr);
+
+    const char* lang = env->GetStringUTFChars(language, nullptr);
+    const char* prompt = env->GetStringUTFChars(initial_prompt, nullptr);
+
+    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    configure_quality_params(params, lang, prompt);
+
+    int result = whisper_full(g_ctx, params, data, len);
+
+    env->ReleaseFloatArrayElements(audio_data, data, JNI_ABORT);
+    env->ReleaseStringUTFChars(language, lang);
+    env->ReleaseStringUTFChars(initial_prompt, prompt);
+
+    if (result != 0) {
+        LOGE("Whisper transcription failed: %d", result);
+        return env->NewStringUTF("");
+    }
+
+    int n_segments = whisper_full_n_segments(g_ctx);
+    std::string text;
+    for (int i = 0; i < n_segments; i++) {
+        text += whisper_full_get_segment_text(g_ctx, i);
+    }
+
+    LOGI("Transcription (with context): %s", text.c_str());
     return env->NewStringUTF(text.c_str());
 #else
     return env->NewStringUTF("");
