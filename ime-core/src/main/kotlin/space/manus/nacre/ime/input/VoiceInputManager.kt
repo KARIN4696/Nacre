@@ -70,6 +70,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     private val whisperConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
             val svc = IWhisperService.Stub.asInterface(binder)
+            Log.i(TAG, "WhisperService onServiceConnected")
             // Load model in background, set whisperService only when ready
             Thread {
                 try {
@@ -178,8 +179,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             }
             return
         }
-        if (!isAvailable()) {
-            Log.w(TAG, "Speech recognition not available")
+        if (whisperService == null && !isAvailable()) {
+            Log.w(TAG, "Speech recognition not available (no Whisper, no SpeechRecognizer)")
             lastError = "音声認識が利用できません"
             return
         }
@@ -201,12 +202,16 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         cancelDeferredCommit()
 
         // Whisper priority — use continuous mode if model loaded
+        Log.i(TAG, "startListening: whisperService=${whisperService != null}, whisperBound=$whisperBound")
         if (whisperService != null) {
             try {
-                if (whisperService!!.isModelLoaded) {
+                val modelLoaded = whisperService!!.isModelLoaded
+                Log.i(TAG, "startListening: Whisper modelLoaded=$modelLoaded")
+                if (modelLoaded) {
                     isWhisperContinuousMode = true
                     requestAudioFocus()
                     whisperService!!.startContinuousRecognition("auto", whisperCallback)
+                    Log.i(TAG, "startListening: Whisper continuous mode STARTED")
                     return
                 }
             } catch (e: android.os.RemoteException) {
@@ -1017,9 +1022,12 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             val intent = android.content.Intent().apply {
                 setClassName(service.packageName, "space.manus.nacre.ai.WhisperService")
             }
-            service.bindService(intent, whisperConnection, android.content.Context.BIND_AUTO_CREATE)
-            whisperBound = true
-        } catch (e: Exception) { }
+            val bound = service.bindService(intent, whisperConnection, android.content.Context.BIND_AUTO_CREATE)
+            whisperBound = bound
+            Log.i(TAG, "bindWhisperService: bound=$bound, package=${service.packageName}")
+        } catch (e: Exception) {
+            Log.e(TAG, "bindWhisperService failed", e)
+        }
     }
 
     fun unbindWhisperService() {
