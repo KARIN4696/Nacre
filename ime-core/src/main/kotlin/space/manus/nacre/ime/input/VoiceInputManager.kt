@@ -69,16 +69,31 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
     private val whisperConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
-            whisperService = IWhisperService.Stub.asInterface(binder)
-            // Auto-load Whisper model if not already loaded
-            try {
-                if (!whisperService!!.isModelLoaded) {
-                    val modelPath = space.manus.nacre.ai.ModelDownloader(service).getWhisperModelPath()
-                    if (modelPath != null) {
-                        whisperService!!.loadModel(modelPath)
+            val svc = IWhisperService.Stub.asInterface(binder)
+            // Load model in background, set whisperService only when ready
+            Thread {
+                try {
+                    if (!svc.isModelLoaded) {
+                        val modelPath = space.manus.nacre.ai.ModelDownloader(service).getWhisperModelPath()
+                        if (modelPath != null) {
+                            svc.loadModel(modelPath)
+                            // Wait for model to load (up to 30 seconds)
+                            for (i in 0 until 60) {
+                                Thread.sleep(500)
+                                if (svc.isModelLoaded) break
+                            }
+                        }
                     }
+                    if (svc.isModelLoaded) {
+                        whisperService = svc
+                        android.util.Log.i("VoiceInputManager", "WhisperService ready, model loaded")
+                    } else {
+                        android.util.Log.w("VoiceInputManager", "WhisperService model failed to load, using SpeechRecognizer")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("VoiceInputManager", "WhisperService init failed", e)
                 }
-            } catch (_: android.os.RemoteException) {}
+            }.start()
         }
         override fun onServiceDisconnected(name: android.content.ComponentName?) {
             whisperService = null
