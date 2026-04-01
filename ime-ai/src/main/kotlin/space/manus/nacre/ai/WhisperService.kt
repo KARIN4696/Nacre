@@ -47,9 +47,13 @@ class WhisperService : Service() {
 
         override fun loadModel(modelPath: String) {
             scope.launch {
-                Log.i(TAG, "Loading Whisper model: $modelPath")
-                val ok = WhisperJni.loadModel(modelPath)
-                Log.i(TAG, "Whisper model loaded: $ok")
+                try {
+                    Log.i(TAG, "Loading Whisper model: $modelPath")
+                    val ok = WhisperJni.loadModel(modelPath)
+                    Log.i(TAG, "Whisper model loaded: $ok (path=$modelPath)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Whisper model loading CRASHED", e)
+                }
             }
         }
 
@@ -111,6 +115,29 @@ class WhisperService : Service() {
                 callback.onError("Model not loaded")
                 return
             }
+
+            // Start as foreground service for microphone access on Android 12+
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    val channelId = "whisper_recording"
+                    val channel = android.app.NotificationChannel(
+                        channelId, "Voice Input", android.app.NotificationManager.IMPORTANCE_LOW
+                    )
+                    val nm = getSystemService(android.app.NotificationManager::class.java)
+                    nm.createNotificationChannel(channel)
+                    val notification = android.app.Notification.Builder(this@WhisperService, channelId)
+                        .setContentTitle("Nacre")
+                        .setContentText("Listening...")
+                        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                        .build()
+                    startForeground(9999, notification,
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to start foreground service", e)
+            }
+
+            this@WhisperService.isRecognizing = true
             continuousCallback = callback
             textBuffer.clear()
             transcriptionChannel = Channel(Channel.BUFFERED)
@@ -221,6 +248,8 @@ class WhisperService : Service() {
         recordingJob = null
         transcriptionJob?.cancel()
         transcriptionJob = null
+        isRecognizing = false
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder = binder

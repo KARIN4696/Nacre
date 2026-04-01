@@ -62,9 +62,9 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     private var consecutiveErrors = 0
 
     // Whisper continuous mode
-    private var whisperService: IWhisperService? = null
-    private var whisperBound = false
-    private var isWhisperContinuousMode = false
+    @Volatile private var whisperService: IWhisperService? = null
+    @Volatile private var whisperBound = false
+    @Volatile private var isWhisperContinuousMode = false
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
 
     private val whisperConnection = object : android.content.ServiceConnection {
@@ -75,24 +75,51 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             Thread {
                 try {
                     if (!svc.isModelLoaded) {
-                        val modelPath = space.manus.nacre.ai.ModelDownloader(service).getWhisperModelPath()
-                        if (modelPath != null) {
-                            svc.loadModel(modelPath)
-                            // Wait for model to load (up to 30 seconds)
-                            for (i in 0 until 60) {
+                        val downloader = space.manus.nacre.ai.ModelDownloader(service)
+                        val foundPath = downloader.getWhisperModelPath()
+                        Log.i(TAG, "Whisper model search result: $foundPath")
+                        if (foundPath != null) {
+                            // Copy to internal storage to avoid scoped storage / mmap issues
+                            val internalDir = java.io.File(service.filesDir, "models")
+                            internalDir.mkdirs()
+                            val internalModel = java.io.File(internalDir, space.manus.nacre.ai.ModelDownloader.WHISPER_FILENAME)
+                            val loadPath = if (internalModel.absolutePath == foundPath) {
+                                // Already in internal storage
+                                foundPath
+                            } else if (internalModel.exists() && internalModel.length() > 0) {
+                                // Internal copy already exists
+                                internalModel.absolutePath
+                            } else {
+                                // Copy from external to internal storage
+                                try {
+                                    Log.i(TAG, "Copying Whisper model to internal storage...")
+                                    java.io.File(foundPath).copyTo(internalModel, overwrite = true)
+                                    Log.i(TAG, "Whisper model copied (${internalModel.length() / 1024 / 1024}MB)")
+                                    internalModel.absolutePath
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed to copy model, using original path", e)
+                                    foundPath
+                                }
+                            }
+                            Log.i(TAG, "Loading Whisper model from: $loadPath")
+                            svc.loadModel(loadPath)
+                            // Wait for model to load (up to 60 seconds for 142MB)
+                            for (i in 0 until 120) {
                                 Thread.sleep(500)
                                 if (svc.isModelLoaded) break
                             }
+                        } else {
+                            Log.w(TAG, "No Whisper model file found on device")
                         }
                     }
                     if (svc.isModelLoaded) {
                         whisperService = svc
-                        android.util.Log.i("VoiceInputManager", "WhisperService ready, model loaded")
+                        Log.i(TAG, "WhisperService ready, model loaded")
                     } else {
-                        android.util.Log.w("VoiceInputManager", "WhisperService model failed to load, using SpeechRecognizer")
+                        Log.w(TAG, "WhisperService model failed to load, using SpeechRecognizer fallback")
                     }
                 } catch (e: Exception) {
-                    android.util.Log.w("VoiceInputManager", "WhisperService init failed", e)
+                    Log.w(TAG, "WhisperService init failed", e)
                 }
             }.start()
         }
@@ -110,6 +137,9 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         override fun onResult(text: String) {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 isWhisperContinuousMode = false
+                isListening = false
+                partialText = ""
+                rmsLevel = 0f
                 releaseAudioFocus()
                 service.currentInputConnection?.finishComposingText()
                 if (text.isNotBlank()) {
@@ -120,15 +150,21 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
         override fun onPartialResult(text: String) {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
+                partialText = text
                 service.currentInputConnection?.setComposingText(text, 1)
             }
         }
 
         override fun onError(message: String) {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Log.w(TAG, "Whisper error: $message")
                 isWhisperContinuousMode = false
+                isListening = false
+                partialText = ""
+                rmsLevel = 0f
+                lastError = "Whisper: $message"
                 releaseAudioFocus()
-                startRecognizer()
+                // Don't auto-fallback to SpeechRecognizer — let user see the error and retry
             }
         }
     }
@@ -208,14 +244,16 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 val modelLoaded = whisperService!!.isModelLoaded
                 Log.i(TAG, "startListening: Whisper modelLoaded=$modelLoaded")
                 if (modelLoaded) {
-                    isWhisperContinuousMode = true
                     requestAudioFocus()
                     whisperService!!.startContinuousRecognition("auto", whisperCallback)
+                    isWhisperContinuousMode = true  // Set AFTER successful IPC
                     Log.i(TAG, "startListening: Whisper continuous mode STARTED")
                     return
                 }
             } catch (e: android.os.RemoteException) {
-                // Fall through to SpeechRecognizer
+                Log.w(TAG, "Whisper IPC failed, falling back to SpeechRecognizer", e)
+                isWhisperContinuousMode = false
+                releaseAudioFocus()
             }
         }
 
