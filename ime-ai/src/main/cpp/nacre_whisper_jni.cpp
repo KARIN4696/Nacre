@@ -78,8 +78,9 @@ static void configure_quality_params(struct whisper_full_params& params, const c
     // Language: "auto" enables auto-detection
     params.language = (lang != nullptr && strlen(lang) > 0) ? lang : "auto";
 
-    // Threading: 4 threads optimal for Snapdragon 8 Gen 3 big cores
-    params.n_threads = 4;
+    // Threading: 1 thread to avoid ggml threadpool deadlock on big.LITTLE ARM64
+    // (whisper.cpp #2725 — barrier spin-lock hangs on cross-cluster cache-line bouncing)
+    params.n_threads = 1;
 
     // Timestamps off — reduces overhead for streaming chunks
     params.no_timestamps = true;
@@ -92,8 +93,8 @@ static void configure_quality_params(struct whisper_full_params& params, const c
 
     // Temperature 0.0 = greedy decoding (deterministic, fastest)
     params.temperature = 0.0f;
-    // Disable temperature fallback (no need since greedy is deterministic)
-    params.temperature_inc = 0.0f;
+    // Allow temperature fallback to avoid infinite decode loop (whisper.cpp #508)
+    params.temperature_inc = 0.2f;
 
     // Entropy threshold: skip segments with high entropy (likely noise/hallucination)
     // Default is 2.4; lower = stricter filtering

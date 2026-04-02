@@ -163,6 +163,8 @@ fun NacreSettingsScreen() {
 
         // --- AI Models ---
         SectionHeader("AI Models")
+        StoragePermissionCard()
+        Spacer(modifier = Modifier.height(8.dp))
         KenLmModelSection()
         Spacer(modifier = Modifier.height(8.dp))
         WhisperModelSection()
@@ -659,15 +661,95 @@ private fun AutoConvertSection(config: ConfigRepository) {
 }
 
 @Composable
+private fun StoragePermissionCard() {
+    val context = LocalContext.current
+    var hasAccess by remember {
+        mutableStateOf(
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                android.os.Environment.isExternalStorageManager()
+            } else true
+        )
+    }
+    // Re-check when resuming from settings
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasAccess = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    android.os.Environment.isExternalStorageManager()
+                } else true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    if (!hasAccess) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2020)),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "File access required",
+                    color = Color(0xFFFF6666),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Allow file access to auto-detect models in Downloads folder",
+                    color = NacreTextDim,
+                    fontSize = 12.sp,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                android.net.Uri.parse("package:${context.packageName}")
+                            )
+                            context.startActivity(intent)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NacreAccent,
+                        contentColor = Color.Black,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Grant File Access")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun KenLmModelSection() {
     val context = LocalContext.current
-    val modelsDir = remember { File(context.filesDir, "models") }
-    val modelFile = remember { File(modelsDir, "japanese-5gram.klm") }
-    var modelExists by remember { mutableStateOf(modelFile.exists()) }
-    var modelSize by remember {
-        mutableStateOf(if (modelFile.exists()) modelFile.length() / 1024 / 1024 else 0L)
-    }
+    val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
+    var modelPath by remember { mutableStateOf(downloader.getKenLmModelPath()) }
+    var modelSize by remember { mutableStateOf(modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L) }
     var importing by remember { mutableStateOf(false) }
+
+    // Re-check model when returning from permission settings
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && modelPath == null) {
+                val found = downloader.getKenLmModelPath()
+                if (found != null) {
+                    modelPath = found
+                    modelSize = java.io.File(found).length() / 1024 / 1024
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -676,17 +758,19 @@ private fun KenLmModelSection() {
         importing = true
         Thread {
             try {
-                modelsDir.mkdirs()
+                val modelsDir = downloader.getModelsDir()
                 val tmpFile = File(modelsDir, "japanese-5gram.klm.tmp")
+                val destFile = File(modelsDir, "japanese-5gram.klm")
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     tmpFile.outputStream().use { output ->
                         input.copyTo(output, bufferSize = 65536)
                     }
                 }
-                tmpFile.renameTo(modelFile)
-                val sizeMb = modelFile.length() / 1024 / 1024
+                tmpFile.renameTo(destFile)
+                val sizeMb = destFile.length() / 1024 / 1024
+                val path = destFile.absolutePath
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    modelExists = true
+                    modelPath = path
                     modelSize = sizeMb
                     importing = false
                     Toast.makeText(context, "KenLM model imported (${sizeMb}MB). Restart keyboard to activate.", Toast.LENGTH_LONG).show()
@@ -700,14 +784,6 @@ private fun KenLmModelSection() {
         }.start()
     }
 
-    // Also check if model is found anywhere on device via ModelDownloader
-    val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
-    val foundPath = remember { downloader.getKenLmModelPath() }
-    val effectiveExists = modelExists || foundPath != null
-    val effectiveSize = if (modelExists) modelSize else {
-        foundPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L
-    }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -717,20 +793,19 @@ private fun KenLmModelSection() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("KenLM 5-gram", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Spacer(modifier = Modifier.width(8.dp))
-                if (effectiveExists) {
+                if (modelPath != null) {
                     Text("Ready", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 } else {
                     Text("Not found", color = Color(0xFFFF6666), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))
-            if (effectiveExists) {
-                Text("Japanese text conversion (${effectiveSize}MB)", color = NacreTextDim, fontSize = 12.sp)
-                val displayPath = if (modelExists) modelFile.absolutePath else foundPath ?: ""
+            if (modelPath != null) {
+                Text("Japanese text conversion (${modelSize}MB)", color = NacreTextDim, fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(displayPath, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
+                Text(modelPath!!, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
             } else {
-                Text("Import a .klm model file for better Japanese conversion", color = NacreTextDim, fontSize = 12.sp)
+                Text("Place japanese-5gram.klm in /sdcard/Download/ and grant file access above", color = NacreTextDim, fontSize = 12.sp)
             }
             Spacer(modifier = Modifier.height(12.dp))
             Button(
@@ -744,7 +819,7 @@ private fun KenLmModelSection() {
             ) {
                 Text(
                     if (importing) "Importing..."
-                    else if (modelExists) "Replace Model"
+                    else if (modelPath != null) "Replace Model"
                     else "Import Model (.klm)"
                 )
             }
@@ -757,12 +832,57 @@ private fun WhisperModelSection() {
     val context = LocalContext.current
     val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
     var modelPath by remember { mutableStateOf(downloader.getWhisperModelPath()) }
-    var modelSize by remember {
-        mutableStateOf(
-            modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L
-        )
+    var modelSize by remember { mutableStateOf(modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L) }
+    var importing by remember { mutableStateOf(false) }
+
+    // Re-check model when returning from permission settings
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && modelPath == null) {
+                val found = downloader.getWhisperModelPath()
+                if (found != null) {
+                    modelPath = found
+                    modelSize = java.io.File(found).length() / 1024 / 1024
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    var downloading by remember { mutableStateOf(false) }
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importing = true
+        Thread {
+            try {
+                val modelsDir = downloader.getModelsDir()
+                val tmpFile = File(modelsDir, "ggml-base.bin.tmp")
+                val destFile = File(modelsDir, "ggml-base.bin")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    tmpFile.outputStream().use { output ->
+                        input.copyTo(output, bufferSize = 65536)
+                    }
+                }
+                tmpFile.renameTo(destFile)
+                val sizeMb = destFile.length() / 1024 / 1024
+                val path = destFile.absolutePath
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    modelPath = path
+                    modelSize = sizeMb
+                    importing = false
+                    Toast.makeText(context, "Whisper model imported (${sizeMb}MB). Restart keyboard to activate.", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    importing = false
+                    Toast.makeText(context, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -771,79 +891,49 @@ private fun WhisperModelSection() {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = if (modelPath != null) "Whisper Base" else "Whisper Base",
-                    color = NacreText,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                )
+                Text("Whisper Base", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Spacer(modifier = Modifier.width(8.dp))
                 if (modelPath != null) {
-                    Text(
-                        text = "Ready",
-                        color = Color(0xFF4CAF50),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Text("Ready", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 } else {
-                    Text(
-                        text = "Not found",
-                        color = Color(0xFFFF6666),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Text("Not found", color = Color(0xFFFF6666), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
 
             if (modelPath != null) {
-                Text(
-                    text = "Offline voice input (${modelSize}MB)",
-                    color = NacreTextDim,
-                    fontSize = 12.sp,
-                )
+                Text("Offline voice input (${modelSize}MB)", color = NacreTextDim, fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = modelPath!!,
-                    color = NacreTextDim.copy(alpha = 0.5f),
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                )
+                Text(modelPath!!, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
             } else {
+                Text("Place ggml-base.bin in /sdcard/Download/ and grant file access above", color = NacreTextDim, fontSize = 12.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = { launcher.launch(arrayOf("*/*")) },
+                enabled = !importing,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NacreAccent,
+                    contentColor = Color.Black,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text(
-                    text = "Place ggml-base.bin anywhere on device, or download below",
-                    color = NacreTextDim,
-                    fontSize = 12.sp,
+                    if (importing) "Importing..."
+                    else if (modelPath != null) "Replace Model"
+                    else "Import Model (.bin)"
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        downloading = true
-                        downloader.downloadWhisperBase { success ->
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                downloading = false
-                                if (success) {
-                                    modelPath = downloader.getWhisperModelPath()
-                                    modelSize = modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L
-                                }
-                            }
-                        }
-                    },
-                    enabled = !downloading,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = NacreAccent,
-                        contentColor = Color.Black,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (downloading) "Downloading..." else "Download (~142MB)")
-                }
             }
         }
     }
 }
 
+/**
+ * Auto-import a model file from /sdcard/Download/ using MediaScanner to get a content URI.
+ * Returns the destination File if import succeeded, null otherwise.
+ */
 @Composable
 fun SettingsCard(
     title: String,

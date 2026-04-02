@@ -63,10 +63,15 @@ class WhisperService : Service() {
             scope.launch {
                 try {
                     Log.i(TAG, "Loading Whisper model: $modelPath")
+                    writeDiag("loadModel called: $modelPath")
+                    val file = java.io.File(modelPath)
+                    writeDiag("model file exists=${file.exists()}, size=${file.length()}, readable=${file.canRead()}")
                     val ok = WhisperJni.loadModel(modelPath)
                     Log.i(TAG, "Whisper model loaded: $ok (path=$modelPath)")
+                    writeDiag("loadModel result: $ok")
                 } catch (e: Exception) {
                     Log.e(TAG, "Whisper model loading CRASHED", e)
+                    writeDiag("loadModel EXCEPTION: ${e.message}\n${e.stackTraceToString()}")
                 }
             }
         }
@@ -200,6 +205,7 @@ class WhisperService : Service() {
                     bufferSize * 2
                 )
                 recorder.startRecording()
+                writeDiag("Recording started, state=${recorder.recordingState}")
 
                 val chunkSamples = SAMPLE_RATE * CHUNK_SIZE_MS / 1000
                 val readBuffer = FloatArray(chunkSamples)
@@ -277,6 +283,11 @@ class WhisperService : Service() {
                         // Pure noise tends to have very high or very low ZCR
                         val isVoice = rms > vadThreshold && zcr > ZCR_MIN && zcr < ZCR_MAX
 
+                        // Periodic VAD diagnostic (every 50 chunks = ~2.5 seconds)
+                        if (totalChunks % 50 == 1) {
+                            writeDiag("VAD chunk=$totalChunks rms=${"%.6f".format(rms)} thresh=${"%.6f".format(vadThreshold)} zcr=${"%.4f".format(zcr)} voice=$isVoice bufSize=${audioBuffer.size}")
+                        }
+
                         if (!isVoice) {
                             // Update pre-padding ring buffer during silence
                             for (i in 0 until read) {
@@ -343,24 +354,47 @@ class WhisperService : Service() {
                 for (chunkAudio in transcriptionChannel) {
                     if (!isActive) break
                     try {
+                        writeDiag("Transcribing chunk: ${chunkAudio.size} samples (${chunkAudio.size / SAMPLE_RATE}s)")
                         // Preprocess audio: DC removal + pre-emphasis + normalization
                         val processed = preprocessAudio(chunkAudio)
 
                         // Check minimum audio energy -- skip near-silent chunks
                         val energy = computeRms(processed)
                         if (energy < MIN_TRANSCRIPTION_ENERGY) {
-                            Log.d(TAG, "Skipping low-energy chunk: RMS=$energy")
+                            writeDiag("Skipping low-energy chunk: RMS=$energy")
                             continue
                         }
+                        writeDiag("Energy OK: RMS=${"%.6f".format(energy)}, calling whisper_full()...")
 
                         // Context priming: pass last transcribed text as initial_prompt
                         val contextPrompt = textBuffer.toString().takeLast(CONTEXT_PROMPT_MAX_CHARS)
-                        val rawText = if (contextPrompt.isNotEmpty()) {
-                            WhisperJni.transcribeWithContext(processed, language, contextPrompt)
-                        } else {
-                            WhisperJni.transcribe(processed, language)
-                        }
+                        val startTime = System.currentTimeMillis()
+                        // Force "ja" instead of "auto" — auto-detection may cause whisper_full() to hang
+                        val effectiveLang = if (language == "auto") "ja" else language
+                        writeDiag("Calling whisper JNI (samples=${processed.size}, lang=$effectiveLang, hasContext=${contextPrompt.isNotEmpty()})...")
 
+                        // Run JNI call with timeout to detect hangs
+                        val future = java.util.concurrent.FutureTask<String> {
+                            if (contextPrompt.isNotEmpty()) {
+                                WhisperJni.transcribeWithContext(processed, effectiveLang, contextPrompt)
+                            } else {
+                                WhisperJni.transcribe(processed, effectiveLang)
+                            }
+                        }
+                        val jniThread = Thread(future, "whisper-jni")
+                        jniThread.start()
+                        val rawText = try {
+                            future.get(30, java.util.concurrent.TimeUnit.SECONDS)
+                        } catch (e: java.util.concurrent.TimeoutException) {
+                            writeDiag("TIMEOUT: whisper_full() did not return in 30s — JNI is hung")
+                            // Cannot cancel native code, but skip this chunk
+                            continue
+                        } catch (e: Exception) {
+                            writeDiag("JNI EXCEPTION: ${e.message}")
+                            continue
+                        }
+                        val elapsed = System.currentTimeMillis() - startTime
+                        writeDiag("whisper_full() returned in ${elapsed}ms, result='${rawText.take(50)}'")
                         if (rawText.isBlank()) continue
 
                         // Hallucination detection: check for repeated text
@@ -696,6 +730,20 @@ class WhisperService : Service() {
         super.onDestroy()
     }
 
+    /** Write diagnostic to a file readable from Termux: /sdcard/Download/nacre-whisper-debug.txt */
+    private fun writeDiag(message: String) {
+        try {
+            val file = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                ),
+                "nacre-whisper-debug.txt"
+            )
+            val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+            file.appendText("[$ts] $message\n")
+        } catch (_: Exception) {}
+    }
+
     companion object {
         private const val TAG = "WhisperService"
         private const val CONTINUOUS_MAX_DURATION_SEC = 360 // 6 minutes
@@ -705,14 +753,15 @@ class WhisperService : Service() {
 
         // ---- VAD tuning ----
         // Floor RMS threshold (used before calibration and as absolute minimum)
-        private const val VAD_RMS_FLOOR = 0.003f
+        // Real-world device mic RMS is often 0.0005–0.002 range
+        private const val VAD_RMS_FLOOR = 0.0005f
         // Adaptive VAD: threshold = ambient_noise_rms * multiplier
-        private const val ADAPTIVE_VAD_MULTIPLIER = 2.5f
+        private const val ADAPTIVE_VAD_MULTIPLIER = 2.0f
         // Ambient noise calibration duration (seconds)
         private const val AMBIENT_CALIBRATION_SEC = 0.5f
         // Zero-crossing rate bounds for speech detection
-        private const val ZCR_MIN = 0.01f  // Below this = DC/very low freq noise
-        private const val ZCR_MAX = 0.35f  // Above this = high-freq noise/hiss
+        private const val ZCR_MIN = 0.005f  // Below this = DC/very low freq noise
+        private const val ZCR_MAX = 0.45f   // Above this = high-freq noise/hiss
 
         // ---- Chunk quality ----
         // Minimum voice chunks before a segment is worth transcribing
@@ -721,7 +770,7 @@ class WhisperService : Service() {
         // Pre-padding: 0.3s of audio before voice onset (improves word-initial recognition)
         private const val PRE_PADDING_SAMPLES = (SAMPLE_RATE * 0.3).toInt() // 4800 samples
         // Minimum RMS energy to attempt transcription
-        private const val MIN_TRANSCRIPTION_ENERGY = 0.002f
+        private const val MIN_TRANSCRIPTION_ENERGY = 0.0003f
 
         // ---- Audio preprocessing ----
         // Pre-emphasis coefficient (standard for speech: 0.97)

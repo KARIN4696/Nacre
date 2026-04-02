@@ -72,18 +72,28 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             val svc = IWhisperService.Stub.asInterface(binder)
             whisperBound = true  // Track reconnections (BIND_AUTO_CREATE may rebind)
             Log.i(TAG, "WhisperService onServiceConnected")
+            writeDiagnostic("onServiceConnected: WhisperService bound")
             // Load model in background, set whisperService only when ready
             Thread {
                 try {
                     if (!svc.isModelLoaded) {
+                        // Diagnostic: check internal storage directly
+                        val internalCheck = java.io.File(service.filesDir, "models/ggml-base.bin")
+                        writeDiagnostic("filesDir=${service.filesDir.absolutePath}")
+                        writeDiagnostic("internal model exists=${internalCheck.exists()}, size=${if (internalCheck.exists()) internalCheck.length() else 0}")
+                        // Also check /sdcard/Download directly
+                        val sdcardCheck = java.io.File("/sdcard/Download/ggml-base.bin")
+                        writeDiagnostic("/sdcard/Download check: exists=${sdcardCheck.exists()}, readable=${sdcardCheck.canRead()}, size=${if (sdcardCheck.exists()) sdcardCheck.length() else 0}")
+
                         val downloader = space.manus.nacre.ai.ModelDownloader(service)
                         val foundPath = downloader.getWhisperModelPath()
                         Log.i(TAG, "Whisper model search result: $foundPath")
+                        writeDiagnostic("Model search result: $foundPath")
                         if (foundPath != null) {
-                            // Copy to internal storage to avoid scoped storage / mmap issues
-                            val internalDir = java.io.File(service.filesDir, "models")
-                            internalDir.mkdirs()
-                            val internalModel = java.io.File(internalDir, space.manus.nacre.ai.ModelDownloader.WHISPER_FILENAME)
+                            // Copy to INTERNAL storage (ext4) — whisper.cpp uses mmap which hangs on FUSE/sdcard
+                            val modelDir = java.io.File(service.filesDir, "models")
+                            modelDir.mkdirs()
+                            val internalModel = java.io.File(modelDir, space.manus.nacre.ai.ModelDownloader.WHISPER_FILENAME)
                             val loadPath = if (internalModel.absolutePath == foundPath) {
                                 // Already in internal storage
                                 foundPath
@@ -116,11 +126,14 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                     if (svc.isModelLoaded) {
                         whisperService = svc
                         Log.i(TAG, "WhisperService ready, model loaded")
+                        writeDiagnostic("SUCCESS: WhisperService ready, model loaded")
                     } else {
                         Log.w(TAG, "WhisperService model failed to load, using SpeechRecognizer fallback")
+                        writeDiagnostic("FAIL: model not loaded, fallback to SpeechRecognizer")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "WhisperService init failed", e)
+                    writeDiagnostic("EXCEPTION: WhisperService init failed: ${e.message}")
                 }
             }.start()
         }
@@ -252,10 +265,10 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
         // Whisper priority — use continuous mode if model loaded
         Log.i(TAG, "startListening: whisperService=${whisperService != null}, whisperBound=$whisperBound, isWhisperContinuousMode=$isWhisperContinuousMode")
+        writeDiagnostic("startListening: whisperService=${whisperService != null}, whisperBound=$whisperBound")
         if (whisperService == null && whisperBound) {
-            // Service is bound but model isn't loaded yet — this means model loading failed
-            // or is still in progress. Log details to help diagnose.
             Log.w(TAG, "startListening: WhisperService is bound but whisperService proxy is null — model likely not loaded")
+            writeDiagnostic("WARNING: bound but proxy null — model not loaded")
         }
         if (whisperService != null) {
             try {
@@ -266,6 +279,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                     whisperService!!.startContinuousRecognition("auto", whisperCallback)
                     isWhisperContinuousMode = true  // Set AFTER successful IPC
                     Log.i(TAG, "startListening: Whisper continuous mode STARTED")
+                    writeDiagnostic("WHISPER STARTED: continuous mode active")
                     return
                 }
             } catch (e: android.os.RemoteException) {
@@ -325,6 +339,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 speechRecognizer = recognizer
                 recognizer.startListening(createRecognizerIntent())
                 Log.i(TAG, "SpeechRecognizer started (lang=$currentLanguage, utterance=$utteranceCount)")
+                writeDiagnostic("FALLBACK: SpeechRecognizer started (NOT Whisper)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start listening", e)
                 lastError = "音声認識の開始に失敗: ${e.message}"
@@ -1100,8 +1115,10 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             val bound = service.bindService(intent, whisperConnection, android.content.Context.BIND_AUTO_CREATE)
             whisperBound = bound
             Log.i(TAG, "bindWhisperService: bound=$bound, package=${service.packageName}")
+            writeDiagnostic("bindWhisperService: bound=$bound")
         } catch (e: Exception) {
             Log.e(TAG, "bindWhisperService failed", e)
+            writeDiagnostic("bindWhisperService FAILED: ${e.message}")
         }
     }
 
@@ -1117,6 +1134,24 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         val bm = service.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return true
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return level > BATTERY_THRESHOLD
+    }
+
+    /**
+     * Write diagnostic info to a file readable from Termux.
+     * File: /sdcard/Download/nacre-voice-debug.txt
+     */
+    private fun writeDiagnostic(message: String) {
+        try {
+            val file = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                ),
+                "nacre-voice-debug.txt"
+            )
+            val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+                .format(java.util.Date())
+            file.appendText("[$timestamp] $message\n")
+        } catch (_: Exception) {}
     }
 
     companion object {

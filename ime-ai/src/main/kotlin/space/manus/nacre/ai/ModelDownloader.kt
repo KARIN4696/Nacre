@@ -49,6 +49,7 @@ class ModelDownloader(private val context: Context) {
      * Get the models directory, creating it if needed.
      */
     fun getModelsDir(): File {
+        // Always use internal storage (ext4) — whisper.cpp uses mmap which hangs on FUSE/sdcard
         val dir = File(context.filesDir, "models")
         if (!dir.exists()) dir.mkdirs()
         return dir
@@ -238,7 +239,14 @@ class ModelDownloader(private val context: Context) {
     private fun findModelFile(filename: String): String? {
         Log.i(TAG, "findModelFile: searching for '$filename'")
 
-        // 1. Internal storage (most reliable — no scoped storage issues)
+        // 0. External files dir (accessible from Termux, no permissions needed)
+        val externalModels = context.getExternalFilesDir(null)?.let { File(it, "models/$filename") }
+        if (externalModels != null) {
+            Log.d(TAG, "findModelFile: external path=${externalModels.absolutePath}, exists=${externalModels.exists()}, size=${if (externalModels.exists()) externalModels.length() else 0}")
+            if (externalModels.exists() && externalModels.length() > 0) return externalModels.absolutePath
+        }
+
+        // 1. Internal storage (legacy fallback)
         val internal = File(context.filesDir, "models/$filename")
         Log.d(TAG, "findModelFile: internal path=${internal.absolutePath}, exists=${internal.exists()}, size=${if (internal.exists()) internal.length() else 0}")
         if (internal.exists() && internal.length() > 0) return internal.absolutePath
@@ -289,7 +297,79 @@ class ModelDownloader(private val context: Context) {
             Log.w(TAG, "findModelFile: scan failed", e)
         }
 
+        // 4. MediaStore query — works under Scoped Storage (API 29+)
+        // IME processes cannot directly read /sdcard/Download/ owned by other apps.
+        // MediaStore provides a content:// URI that we CAN read, then copy to internal storage.
+        Log.d(TAG, "findModelFile: trying MediaStore query for '$filename'")
+        try {
+            val found = findViaMediaStore(filename)
+            if (found != null) {
+                Log.i(TAG, "findModelFile: FOUND via MediaStore, copied to ${found.absolutePath}")
+                return found.absolutePath
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "findModelFile: MediaStore query failed", e)
+        }
+
         Log.w(TAG, "findModelFile: '$filename' NOT FOUND anywhere on device")
+        return null
+    }
+
+    /**
+     * Search Downloads via MediaStore and copy the file to internal storage.
+     * This is the only reliable way to access files in /sdcard/Download/ from
+     * an IME process under Scoped Storage (Android 11+).
+     */
+    private fun findViaMediaStore(filename: String): File? {
+        val resolver = context.contentResolver
+        val collection = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(
+            android.provider.MediaStore.Downloads._ID,
+            android.provider.MediaStore.Downloads.DISPLAY_NAME,
+            android.provider.MediaStore.Downloads.SIZE,
+        )
+        val selection = "${android.provider.MediaStore.Downloads.DISPLAY_NAME} = ?"
+        val selectionArgs = arrayOf(filename)
+
+        resolver.query(collection, projection, selection, selectionArgs, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Downloads._ID)
+                val sizeCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.SIZE)
+                val id = cursor.getLong(idCol)
+                val size = cursor.getLong(sizeCol)
+                Log.i(TAG, "findViaMediaStore: found '$filename' id=$id size=${size / 1024 / 1024}MB")
+
+                val uri = android.content.ContentUris.withAppendedId(collection, id)
+                val internalFile = File(getModelsDir(), filename)
+
+                // Skip copy if internal file already exists with correct size
+                if (internalFile.exists() && internalFile.length() == size) {
+                    Log.i(TAG, "findViaMediaStore: internal copy already exists")
+                    return internalFile
+                }
+
+                // Copy from content:// URI to internal storage
+                Log.i(TAG, "findViaMediaStore: copying ${size / 1024 / 1024}MB to internal storage...")
+                resolver.openInputStream(uri)?.use { input ->
+                    internalFile.outputStream().use { output ->
+                        val buffer = ByteArray(65536)
+                        var totalCopied = 0L
+                        var bytesRead: Int
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            totalCopied += bytesRead
+                        }
+                        Log.i(TAG, "findViaMediaStore: copied ${totalCopied / 1024 / 1024}MB")
+                    }
+                }
+
+                if (internalFile.exists() && internalFile.length() > 0) {
+                    return internalFile
+                }
+            } else {
+                Log.d(TAG, "findViaMediaStore: no results for '$filename'")
+            }
+        }
         return null
     }
 
