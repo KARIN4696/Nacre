@@ -11,12 +11,13 @@ import java.net.URL
 /**
  * Model download manager.
  *
- * Downloads Whisper and LLM model files to internal storage.
- * Provides progress updates and supports resumption.
+ * Locates SenseVoice, Silero VAD, and KenLM model files.
+ * Searches internal storage, then external storage.
  *
  * Models:
- * - Whisper base: ~142MB (whisper-base.bin)
- * - Gemma 3 1B INT4: ~600MB (gemma-3-1b-q4.gguf)
+ * - SenseVoice int8: ~229MB (model.int8.onnx + tokens.txt in a directory)
+ * - Silero VAD: ~629KB (silero_vad.onnx)
+ * - KenLM 5-gram: ~561MB (japanese-5gram.klm)
  */
 class ModelDownloader(private val context: Context) {
 
@@ -49,7 +50,6 @@ class ModelDownloader(private val context: Context) {
      * Get the models directory, creating it if needed.
      */
     fun getModelsDir(): File {
-        // Always use internal storage (ext4) — whisper.cpp uses mmap which hangs on FUSE/sdcard
         val dir = File(context.filesDir, "models")
         if (!dir.exists()) dir.mkdirs()
         return dir
@@ -59,29 +59,122 @@ class ModelDownloader(private val context: Context) {
      * Check which models are already downloaded.
      */
     fun getDownloadedModels(): Map<String, Boolean> {
-        val dir = getModelsDir()
         return mapOf(
-            "whisper" to File(dir, WHISPER_FILENAME).exists(),
-            "llm" to File(dir, "gemma-3-1b-q4.gguf").exists(),
-            "kenlm" to File(dir, KENLM_FILENAME).exists(),
+            "sensevoice" to (getSenseVoiceModelDir() != null),
+            "vad" to (getVadModelPath() != null),
+            "llm" to File(getModelsDir(), "gemma-3-1b-q4.gguf").exists(),
+            "kenlm" to File(getModelsDir(), KENLM_FILENAME).exists(),
+        )
+    }
+
+    // ---- SenseVoice model ----
+
+    /**
+     * Get SenseVoice model directory path if it exists.
+     * The directory must contain model.int8.onnx and tokens.txt.
+     */
+    fun getSenseVoiceModelDir(): String? {
+        Log.i(TAG, "getSenseVoiceModelDir: searching for SenseVoice model")
+
+        // Search candidate directories for one containing model.int8.onnx
+        val candidates = mutableListOf<File>()
+
+        // Internal storage
+        candidates.add(File(getModelsDir(), SENSEVOICE_DIR))
+        // External files dir
+        context.getExternalFilesDir(null)?.let {
+            candidates.add(File(it, "models/$SENSEVOICE_DIR"))
+        }
+        // Common external locations
+        val sdcard = android.os.Environment.getExternalStorageDirectory()
+        val downloads = android.os.Environment.getExternalStoragePublicDirectory(
+            android.os.Environment.DIRECTORY_DOWNLOADS
+        )
+        candidates.addAll(listOf(
+            File(downloads, SENSEVOICE_DIR),
+            File(sdcard, SENSEVOICE_DIR),
+            File("/sdcard/Download/$SENSEVOICE_DIR"),
+            File("/storage/emulated/0/Download/$SENSEVOICE_DIR"),
+        ))
+
+        for (dir in candidates.distinctBy { it.absolutePath }) {
+            if (isSenseVoiceDir(dir)) {
+                Log.i(TAG, "getSenseVoiceModelDir: FOUND at ${dir.absolutePath}")
+                return dir.absolutePath
+            }
+        }
+
+        // Recursive scan: look for model.int8.onnx
+        try {
+            val found = scanForFile(sdcard, "model.int8.onnx", maxDepth = 4)
+            if (found != null) {
+                val dir = found.parentFile
+                if (dir != null && isSenseVoiceDir(dir)) {
+                    Log.i(TAG, "getSenseVoiceModelDir: FOUND via scan at ${dir.absolutePath}")
+                    return dir.absolutePath
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "getSenseVoiceModelDir: scan failed", e)
+        }
+
+        Log.w(TAG, "getSenseVoiceModelDir: NOT FOUND")
+        return null
+    }
+
+    private fun isSenseVoiceDir(dir: File): Boolean {
+        return try {
+            dir.isDirectory &&
+                File(dir, "model.int8.onnx").let { it.exists() && it.length() > 0 } &&
+                File(dir, "tokens.txt").exists()
+        } catch (_: Exception) { false }
+    }
+
+    // ---- Silero VAD model ----
+
+    /**
+     * Get Silero VAD model path if it exists.
+     */
+    fun getVadModelPath(): String? {
+        Log.i(TAG, "getVadModelPath: searching for silero_vad.onnx")
+        return findModelFile(VAD_FILENAME)
+    }
+
+    // ---- KenLM model ----
+
+    /**
+     * Download the KenLM 5-gram Japanese language model.
+     */
+    fun downloadKenLm(onComplete: (Boolean) -> Unit) {
+        downloadModel(
+            url = KENLM_URL,
+            modelName = "KenLM 日本語5-gram",
+            fileName = KENLM_FILENAME,
+            onComplete = onComplete,
         )
     }
 
     /**
-     * Download a model from URL.
-     *
-     * @param url Download URL
-     * @param modelName Name for progress reporting
-     * @param fileName Output file name
-     * @param onComplete Called when download finishes
+     * Get KenLM model file if it exists.
      */
+    fun getKenLmModel(): File? {
+        val file = File(getModelsDir(), KENLM_FILENAME)
+        return if (file.exists()) file else null
+    }
+
+    /**
+     * Get KenLM model path if it exists.
+     */
+    fun getKenLmModelPath(): String? = findModelFile(KENLM_FILENAME)
+
+    // ---- Generic download ----
+
     fun downloadModel(
         url: String,
         modelName: String,
         fileName: String,
         onComplete: (Boolean) -> Unit,
     ) {
-        // SPEC: require purchase before model download
         if (!isAiAddonPurchased()) {
             Log.w(TAG, "AI addon not purchased, refusing download")
             onComplete(false)
@@ -97,7 +190,6 @@ class ModelDownloader(private val context: Context) {
                 connection.connectTimeout = 30000
                 connection.readTimeout = 30000
 
-                // Support resume
                 if (tmpFile.exists()) {
                     connection.setRequestProperty("Range", "bytes=${tmpFile.length()}-")
                 }
@@ -135,7 +227,6 @@ class ModelDownloader(private val context: Context) {
                 input.close()
                 connection.disconnect()
 
-                // Rename tmp to final
                 tmpFile.renameTo(outFile)
 
                 withContext(Dispatchers.Main) {
@@ -163,18 +254,12 @@ class ModelDownloader(private val context: Context) {
         currentJob = null
     }
 
-    /**
-     * Delete downloaded models to free space.
-     */
     fun deleteModels() {
         val dir = getModelsDir()
         dir.listFiles()?.forEach { it.delete() }
         Log.i(TAG, "All models deleted")
     }
 
-    /**
-     * Get total size of downloaded models in bytes.
-     */
     fun getModelsSize(): Long {
         val dir = getModelsDir()
         return dir.listFiles()?.sumOf { it.length() } ?: 0
@@ -184,75 +269,26 @@ class ModelDownloader(private val context: Context) {
         scope.cancel()
     }
 
-    /**
-     * Download the KenLM 5-gram Japanese language model.
-     * Trained on Wikipedia (~561MB). Significantly improves conversion accuracy.
-     */
-    fun downloadKenLm(onComplete: (Boolean) -> Unit) {
-        downloadModel(
-            url = KENLM_URL,
-            modelName = "KenLM 日本語5-gram",
-            fileName = KENLM_FILENAME,
-            onComplete = onComplete,
-        )
-    }
-
-    /**
-     * Get KenLM model file if it exists.
-     */
-    fun getKenLmModel(): File? {
-        val file = File(getModelsDir(), KENLM_FILENAME)
-        return if (file.exists()) file else null
-    }
-
-    /**
-     * Download the Whisper base model (~142MB).
-     * Used for speech-to-text transcription.
-     */
-    fun downloadWhisperBase(onComplete: (Boolean) -> Unit) {
-        downloadModel(
-            url = WHISPER_URL,
-            modelName = "Whisper Base",
-            fileName = WHISPER_FILENAME,
-            onComplete = onComplete,
-        )
-    }
-
-    /**
-     * Get Whisper model path if it exists.
-     * Searches internal storage, then scans external storage recursively.
-     */
-    fun getWhisperModelPath(): String? = findModelFile(WHISPER_FILENAME)
-
-    /**
-     * Get KenLM model path if it exists.
-     * Searches internal storage, then scans external storage recursively.
-     */
-    fun getKenLmModelPath(): String? = findModelFile(KENLM_FILENAME)
+    // ---- File search ----
 
     /**
      * Search for a model file by name.
      * 1. Internal storage (app models dir)
-     * 2. Common locations (Download, nacre-models) — uses multiple path resolution strategies
-     * 3. Recursive scan of /sdcard (breadth-first, max depth 4)
+     * 2. Common locations (Download, etc.)
+     * 3. Recursive scan of /sdcard (max depth 4)
+     * 4. MediaStore query
      */
     private fun findModelFile(filename: String): String? {
         Log.i(TAG, "findModelFile: searching for '$filename'")
 
-        // 0. External files dir (accessible from Termux, no permissions needed)
         val externalModels = context.getExternalFilesDir(null)?.let { File(it, "models/$filename") }
-        if (externalModels != null) {
-            Log.d(TAG, "findModelFile: external path=${externalModels.absolutePath}, exists=${externalModels.exists()}, size=${if (externalModels.exists()) externalModels.length() else 0}")
-            if (externalModels.exists() && externalModels.length() > 0) return externalModels.absolutePath
+        if (externalModels != null && externalModels.exists() && externalModels.length() > 0) {
+            return externalModels.absolutePath
         }
 
-        // 1. Internal storage (legacy fallback)
         val internal = File(context.filesDir, "models/$filename")
-        Log.d(TAG, "findModelFile: internal path=${internal.absolutePath}, exists=${internal.exists()}, size=${if (internal.exists()) internal.length() else 0}")
         if (internal.exists() && internal.length() > 0) return internal.absolutePath
 
-        // 2. Common locations (fast check)
-        // Use multiple strategies to resolve paths — Environment API can fail in IME context
         val sdcard = android.os.Environment.getExternalStorageDirectory()
         val downloads = android.os.Environment.getExternalStoragePublicDirectory(
             android.os.Environment.DIRECTORY_DOWNLOADS
@@ -262,31 +298,21 @@ class ModelDownloader(private val context: Context) {
             File(downloads, "nacre-models/$filename"),
             File(sdcard, filename),
             File(sdcard, "models/$filename"),
-            File(sdcard, "nacre/$filename"),
-            File(sdcard, "Documents/$filename"),
-            // Hardcoded fallback paths (Environment API may resolve differently in IME process)
             File("/sdcard/Download/$filename"),
             File("/storage/emulated/0/Download/$filename"),
             File("/sdcard/$filename"),
-            File("/storage/emulated/0/$filename"),
-            // Context-based external files dir
-            File(context.getExternalFilesDir(null), "models/$filename"),
-            File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), filename),
         ).distinctBy { it.absolutePath }
 
         for (path in quickPaths) {
             val exists = try { path.exists() } catch (_: Exception) { false }
             val readable = try { path.canRead() } catch (_: Exception) { false }
             val size = try { if (exists) path.length() else 0L } catch (_: Exception) { 0L }
-            Log.d(TAG, "findModelFile: check ${path.absolutePath} exists=$exists readable=$readable size=$size")
             if (exists && readable && size > 0) {
-                Log.i(TAG, "findModelFile: FOUND at ${path.absolutePath} (${size / 1024 / 1024}MB)")
+                Log.i(TAG, "findModelFile: FOUND at ${path.absolutePath}")
                 return path.absolutePath
             }
         }
 
-        // 3. Recursive scan (breadth-first, max depth 4, skip hidden/Android dirs)
-        Log.d(TAG, "findModelFile: starting recursive scan from $sdcard")
         try {
             val found = scanForFile(sdcard, filename, maxDepth = 4)
             if (found != null) {
@@ -297,29 +323,20 @@ class ModelDownloader(private val context: Context) {
             Log.w(TAG, "findModelFile: scan failed", e)
         }
 
-        // 4. MediaStore query — works under Scoped Storage (API 29+)
-        // IME processes cannot directly read /sdcard/Download/ owned by other apps.
-        // MediaStore provides a content:// URI that we CAN read, then copy to internal storage.
-        Log.d(TAG, "findModelFile: trying MediaStore query for '$filename'")
         try {
             val found = findViaMediaStore(filename)
             if (found != null) {
-                Log.i(TAG, "findModelFile: FOUND via MediaStore, copied to ${found.absolutePath}")
+                Log.i(TAG, "findModelFile: FOUND via MediaStore at ${found.absolutePath}")
                 return found.absolutePath
             }
         } catch (e: Exception) {
             Log.w(TAG, "findModelFile: MediaStore query failed", e)
         }
 
-        Log.w(TAG, "findModelFile: '$filename' NOT FOUND anywhere on device")
+        Log.w(TAG, "findModelFile: '$filename' NOT FOUND")
         return null
     }
 
-    /**
-     * Search Downloads via MediaStore and copy the file to internal storage.
-     * This is the only reliable way to access files in /sdcard/Download/ from
-     * an IME process under Scoped Storage (Android 11+).
-     */
     private fun findViaMediaStore(filename: String): File? {
         val resolver = context.contentResolver
         val collection = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
@@ -337,37 +354,27 @@ class ModelDownloader(private val context: Context) {
                 val sizeCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.SIZE)
                 val id = cursor.getLong(idCol)
                 val size = cursor.getLong(sizeCol)
-                Log.i(TAG, "findViaMediaStore: found '$filename' id=$id size=${size / 1024 / 1024}MB")
 
                 val uri = android.content.ContentUris.withAppendedId(collection, id)
                 val internalFile = File(getModelsDir(), filename)
 
-                // Skip copy if internal file already exists with correct size
                 if (internalFile.exists() && internalFile.length() == size) {
-                    Log.i(TAG, "findViaMediaStore: internal copy already exists")
                     return internalFile
                 }
 
-                // Copy from content:// URI to internal storage
-                Log.i(TAG, "findViaMediaStore: copying ${size / 1024 / 1024}MB to internal storage...")
                 resolver.openInputStream(uri)?.use { input ->
                     internalFile.outputStream().use { output ->
                         val buffer = ByteArray(65536)
-                        var totalCopied = 0L
                         var bytesRead: Int
                         while (input.read(buffer).also { bytesRead = it } != -1) {
                             output.write(buffer, 0, bytesRead)
-                            totalCopied += bytesRead
                         }
-                        Log.i(TAG, "findViaMediaStore: copied ${totalCopied / 1024 / 1024}MB")
                     }
                 }
 
                 if (internalFile.exists() && internalFile.length() > 0) {
                     return internalFile
                 }
-            } else {
-                Log.d(TAG, "findViaMediaStore: no results for '$filename'")
             }
         }
         return null
@@ -377,11 +384,9 @@ class ModelDownloader(private val context: Context) {
         if (maxDepth <= 0 || !root.isDirectory) return null
         val skipDirs = setOf("Android", ".thumbnails", ".cache", "cache", "DCIM", "Pictures", "Music", "Ringtones", "Alarms", "Notifications")
         val children = root.listFiles() ?: return null
-        // Check files first
         for (f in children) {
             if (f.isFile && f.name == filename) return f
         }
-        // Then recurse into subdirectories
         for (f in children) {
             if (f.isDirectory && f.name !in skipDirs && !f.name.startsWith(".")) {
                 val found = scanForFile(f, filename, maxDepth - 1)
@@ -393,9 +398,9 @@ class ModelDownloader(private val context: Context) {
 
     companion object {
         private const val TAG = "ModelDownloader"
+        const val SENSEVOICE_DIR = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+        const val VAD_FILENAME = "silero_vad.onnx"
         const val KENLM_FILENAME = "japanese-5gram.klm"
         const val KENLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/japanese-5gram.klm"
-        const val WHISPER_FILENAME = "ggml-base.bin"
-        const val WHISPER_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/ggml-base.bin"
     }
 }

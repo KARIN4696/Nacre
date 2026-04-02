@@ -831,57 +831,36 @@ private fun KenLmModelSection() {
 private fun WhisperModelSection() {
     val context = LocalContext.current
     val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
-    var modelPath by remember { mutableStateOf(downloader.getWhisperModelPath()) }
-    var modelSize by remember { mutableStateOf(modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L) }
-    var importing by remember { mutableStateOf(false) }
+    var modelDir by remember { mutableStateOf(downloader.getSenseVoiceModelDir()) }
+    var vadPath by remember { mutableStateOf(downloader.getVadModelPath()) }
+    val isReady = modelDir != null && vadPath != null
+    var modelSize by remember {
+        mutableStateOf(
+            modelDir?.let {
+                val model = java.io.File(it, "model.int8.onnx")
+                if (model.exists()) model.length() / 1024 / 1024 else 0L
+            } ?: 0L
+        )
+    }
 
     // Re-check model when returning from permission settings
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && modelPath == null) {
-                val found = downloader.getWhisperModelPath()
-                if (found != null) {
-                    modelPath = found
-                    modelSize = java.io.File(found).length() / 1024 / 1024
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && !isReady) {
+                val foundDir = downloader.getSenseVoiceModelDir()
+                val foundVad = downloader.getVadModelPath()
+                if (foundDir != null) {
+                    modelDir = foundDir
+                    modelSize = java.io.File(foundDir, "model.int8.onnx").let {
+                        if (it.exists()) it.length() / 1024 / 1024 else 0L
+                    }
                 }
+                if (foundVad != null) vadPath = foundVad
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        importing = true
-        Thread {
-            try {
-                val modelsDir = downloader.getModelsDir()
-                val tmpFile = File(modelsDir, "ggml-base.bin.tmp")
-                val destFile = File(modelsDir, "ggml-base.bin")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    tmpFile.outputStream().use { output ->
-                        input.copyTo(output, bufferSize = 65536)
-                    }
-                }
-                tmpFile.renameTo(destFile)
-                val sizeMb = destFile.length() / 1024 / 1024
-                val path = destFile.absolutePath
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    modelPath = path
-                    modelSize = sizeMb
-                    importing = false
-                    Toast.makeText(context, "Whisper model imported (${sizeMb}MB). Restart keyboard to activate.", Toast.LENGTH_LONG).show()
-                }
-            } catch (e: Exception) {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    importing = false
-                    Toast.makeText(context, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }.start()
     }
 
     Card(
@@ -891,9 +870,9 @@ private fun WhisperModelSection() {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Whisper Base", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("SenseVoice", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Spacer(modifier = Modifier.width(8.dp))
-                if (modelPath != null) {
+                if (isReady) {
                     Text("Ready", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 } else {
                     Text("Not found", color = Color(0xFFFF6666), fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -902,29 +881,24 @@ private fun WhisperModelSection() {
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            if (modelPath != null) {
-                Text("Offline voice input (${modelSize}MB)", color = NacreTextDim, fontSize = 12.sp)
+            if (isReady) {
+                Text("Offline voice input — ja/en/zh/ko (${modelSize}MB)", color = NacreTextDim, fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(modelPath!!, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
+                Text(modelDir!!, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
+                if (vadPath != null) {
+                    Text("VAD: $vadPath", color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
+                }
             } else {
-                Text("Place ggml-base.bin in /sdcard/Download/ and grant file access above", color = NacreTextDim, fontSize = 12.sp)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(
-                onClick = { launcher.launch(arrayOf("*/*")) },
-                enabled = !importing,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = NacreAccent,
-                    contentColor = Color.Black,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
                 Text(
-                    if (importing) "Importing..."
-                    else if (modelPath != null) "Replace Model"
-                    else "Import Model (.bin)"
+                    "Place SenseVoice model directory + silero_vad.onnx in /sdcard/Download/",
+                    color = NacreTextDim, fontSize = 12.sp,
                 )
+                if (modelDir == null) {
+                    Text("Model: not found", color = Color(0xFFFF6666), fontSize = 11.sp)
+                }
+                if (vadPath == null) {
+                    Text("VAD: not found", color = Color(0xFFFF6666), fontSize = 11.sp)
+                }
             }
         }
     }

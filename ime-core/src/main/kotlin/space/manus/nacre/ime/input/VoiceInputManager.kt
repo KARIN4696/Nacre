@@ -70,70 +70,36 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     private val whisperConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
             val svc = IWhisperService.Stub.asInterface(binder)
-            whisperBound = true  // Track reconnections (BIND_AUTO_CREATE may rebind)
+            whisperBound = true
             Log.i(TAG, "WhisperService onServiceConnected")
-            writeDiagnostic("onServiceConnected: WhisperService bound")
-            // Load model in background, set whisperService only when ready
+            // Load SenseVoice model in background
             Thread {
                 try {
                     if (!svc.isModelLoaded) {
-                        // Diagnostic: check internal storage directly
-                        val internalCheck = java.io.File(service.filesDir, "models/ggml-base.bin")
-                        writeDiagnostic("filesDir=${service.filesDir.absolutePath}")
-                        writeDiagnostic("internal model exists=${internalCheck.exists()}, size=${if (internalCheck.exists()) internalCheck.length() else 0}")
-                        // Also check /sdcard/Download directly
-                        val sdcardCheck = java.io.File("/sdcard/Download/ggml-base.bin")
-                        writeDiagnostic("/sdcard/Download check: exists=${sdcardCheck.exists()}, readable=${sdcardCheck.canRead()}, size=${if (sdcardCheck.exists()) sdcardCheck.length() else 0}")
-
                         val downloader = space.manus.nacre.ai.ModelDownloader(service)
-                        val foundPath = downloader.getWhisperModelPath()
-                        Log.i(TAG, "Whisper model search result: $foundPath")
-                        writeDiagnostic("Model search result: $foundPath")
-                        if (foundPath != null) {
-                            // Copy to INTERNAL storage (ext4) — whisper.cpp uses mmap which hangs on FUSE/sdcard
-                            val modelDir = java.io.File(service.filesDir, "models")
-                            modelDir.mkdirs()
-                            val internalModel = java.io.File(modelDir, space.manus.nacre.ai.ModelDownloader.WHISPER_FILENAME)
-                            val loadPath = if (internalModel.absolutePath == foundPath) {
-                                // Already in internal storage
-                                foundPath
-                            } else if (internalModel.exists() && internalModel.length() > 0) {
-                                // Internal copy already exists
-                                internalModel.absolutePath
-                            } else {
-                                // Copy from external to internal storage
-                                try {
-                                    Log.i(TAG, "Copying Whisper model to internal storage...")
-                                    java.io.File(foundPath).copyTo(internalModel, overwrite = true)
-                                    Log.i(TAG, "Whisper model copied (${internalModel.length() / 1024 / 1024}MB)")
-                                    internalModel.absolutePath
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "Failed to copy model, using original path", e)
-                                    foundPath
-                                }
-                            }
-                            Log.i(TAG, "Loading Whisper model from: $loadPath")
-                            svc.loadModel(loadPath)
-                            // Wait for model to load (up to 60 seconds for 142MB)
+                        val modelDir = downloader.getSenseVoiceModelDir()
+                        val vadPath = downloader.getVadModelPath()
+                        Log.i(TAG, "SenseVoice model search: dir=$modelDir, vad=$vadPath")
+                        if (modelDir != null && vadPath != null) {
+                            // Pass both paths separated by "|"
+                            svc.loadModel("$modelDir|$vadPath")
+                            // Wait for model to load (up to 60 seconds)
                             for (i in 0 until 120) {
                                 Thread.sleep(500)
                                 if (svc.isModelLoaded) break
                             }
                         } else {
-                            Log.w(TAG, "No Whisper model file found on device")
+                            Log.w(TAG, "SenseVoice model not found on device (dir=$modelDir, vad=$vadPath)")
                         }
                     }
                     if (svc.isModelLoaded) {
                         whisperService = svc
-                        Log.i(TAG, "WhisperService ready, model loaded")
-                        writeDiagnostic("SUCCESS: WhisperService ready, model loaded")
+                        Log.i(TAG, "WhisperService ready, SenseVoice model loaded")
                     } else {
-                        Log.w(TAG, "WhisperService model failed to load, using SpeechRecognizer fallback")
-                        writeDiagnostic("FAIL: model not loaded, fallback to SpeechRecognizer")
+                        Log.w(TAG, "SenseVoice model failed to load, using SpeechRecognizer fallback")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "WhisperService init failed", e)
-                    writeDiagnostic("EXCEPTION: WhisperService init failed: ${e.message}")
                 }
             }.start()
         }
@@ -167,9 +133,21 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 partialText = ""
                 rmsLevel = 0f
                 releaseAudioFocus()
-                service.currentInputConnection?.finishComposingText()
+
                 if (text.isNotBlank()) {
-                    service.currentInputConnection?.commitText(text, 1)
+                    // Show loading state while LLM processes
+                    service.currentInputConnection?.setComposingText("整形中...", 1)
+
+                    // LLM post-processing in background
+                    Thread {
+                        val refined = space.manus.nacre.ai.LlmPostProcessor.refine(text)
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            service.currentInputConnection?.finishComposingText()
+                            service.currentInputConnection?.commitText(refined, 1)
+                        }
+                    }.start()
+                } else {
+                    service.currentInputConnection?.finishComposingText()
                 }
             }
         }
