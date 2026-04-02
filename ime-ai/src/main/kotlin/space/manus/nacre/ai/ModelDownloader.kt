@@ -232,15 +232,19 @@ class ModelDownloader(private val context: Context) {
     /**
      * Search for a model file by name.
      * 1. Internal storage (app models dir)
-     * 2. Common locations (Download, nacre-models)
+     * 2. Common locations (Download, nacre-models) — uses multiple path resolution strategies
      * 3. Recursive scan of /sdcard (breadth-first, max depth 4)
      */
     private fun findModelFile(filename: String): String? {
-        // 1. Internal storage
+        Log.i(TAG, "findModelFile: searching for '$filename'")
+
+        // 1. Internal storage (most reliable — no scoped storage issues)
         val internal = File(context.filesDir, "models/$filename")
-        if (internal.exists()) return internal.absolutePath
+        Log.d(TAG, "findModelFile: internal path=${internal.absolutePath}, exists=${internal.exists()}, size=${if (internal.exists()) internal.length() else 0}")
+        if (internal.exists() && internal.length() > 0) return internal.absolutePath
 
         // 2. Common locations (fast check)
+        // Use multiple strategies to resolve paths — Environment API can fail in IME context
         val sdcard = android.os.Environment.getExternalStorageDirectory()
         val downloads = android.os.Environment.getExternalStoragePublicDirectory(
             android.os.Environment.DIRECTORY_DOWNLOADS
@@ -252,24 +256,40 @@ class ModelDownloader(private val context: Context) {
             File(sdcard, "models/$filename"),
             File(sdcard, "nacre/$filename"),
             File(sdcard, "Documents/$filename"),
-        )
-        val quick = quickPaths.firstOrNull { it.exists() }
-        if (quick != null) {
-            Log.i(TAG, "Found model at ${quick.absolutePath}")
-            return quick.absolutePath
+            // Hardcoded fallback paths (Environment API may resolve differently in IME process)
+            File("/sdcard/Download/$filename"),
+            File("/storage/emulated/0/Download/$filename"),
+            File("/sdcard/$filename"),
+            File("/storage/emulated/0/$filename"),
+            // Context-based external files dir
+            File(context.getExternalFilesDir(null), "models/$filename"),
+            File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), filename),
+        ).distinctBy { it.absolutePath }
+
+        for (path in quickPaths) {
+            val exists = try { path.exists() } catch (_: Exception) { false }
+            val readable = try { path.canRead() } catch (_: Exception) { false }
+            val size = try { if (exists) path.length() else 0L } catch (_: Exception) { 0L }
+            Log.d(TAG, "findModelFile: check ${path.absolutePath} exists=$exists readable=$readable size=$size")
+            if (exists && readable && size > 0) {
+                Log.i(TAG, "findModelFile: FOUND at ${path.absolutePath} (${size / 1024 / 1024}MB)")
+                return path.absolutePath
+            }
         }
 
         // 3. Recursive scan (breadth-first, max depth 4, skip hidden/Android dirs)
+        Log.d(TAG, "findModelFile: starting recursive scan from $sdcard")
         try {
             val found = scanForFile(sdcard, filename, maxDepth = 4)
             if (found != null) {
-                Log.i(TAG, "Found model via scan at ${found.absolutePath}")
+                Log.i(TAG, "findModelFile: FOUND via scan at ${found.absolutePath}")
                 return found.absolutePath
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Model scan failed", e)
+            Log.w(TAG, "findModelFile: scan failed", e)
         }
 
+        Log.w(TAG, "findModelFile: '$filename' NOT FOUND anywhere on device")
         return null
     }
 

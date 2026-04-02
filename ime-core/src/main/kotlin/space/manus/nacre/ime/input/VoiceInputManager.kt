@@ -251,7 +251,12 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         cancelDeferredCommit()
 
         // Whisper priority — use continuous mode if model loaded
-        Log.i(TAG, "startListening: whisperService=${whisperService != null}, whisperBound=$whisperBound")
+        Log.i(TAG, "startListening: whisperService=${whisperService != null}, whisperBound=$whisperBound, isWhisperContinuousMode=$isWhisperContinuousMode")
+        if (whisperService == null && whisperBound) {
+            // Service is bound but model isn't loaded yet — this means model loading failed
+            // or is still in progress. Log details to help diagnose.
+            Log.w(TAG, "startListening: WhisperService is bound but whisperService proxy is null — model likely not loaded")
+        }
         if (whisperService != null) {
             try {
                 val modelLoaded = whisperService!!.isModelLoaded
