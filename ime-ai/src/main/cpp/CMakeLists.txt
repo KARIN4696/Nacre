@@ -5,43 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 
-# === Whisper.cpp (optional - sources cloned by CI) ===
-set(WHISPER_DIR "${CMAKE_SOURCE_DIR}/whisper")
-if(EXISTS "${WHISPER_DIR}/whisper.cpp")
-    # Collect sources — preserve subdirectory structure
-    file(GLOB WHISPER_GGML_C "${WHISPER_DIR}/ggml-src/*.c")
-    file(GLOB WHISPER_GGML_CPP "${WHISPER_DIR}/ggml-src/*.cpp")
-    file(GLOB WHISPER_GGML_CPU_C "${WHISPER_DIR}/ggml-src/ggml-cpu/*.c")
-    file(GLOB WHISPER_GGML_CPU_CPP "${WHISPER_DIR}/ggml-src/ggml-cpu/*.cpp")
-    file(GLOB WHISPER_GGML_CPU_LLAMAFILE "${WHISPER_DIR}/ggml-src/ggml-cpu/llamafile/*.cpp")
-    file(GLOB WHISPER_GGML_CPU_AMX "${WHISPER_DIR}/ggml-src/ggml-cpu/amx/*.cpp")
-
-    add_library(whisper_lib STATIC
-        ${WHISPER_DIR}/whisper.cpp
-        ${WHISPER_GGML_C}
-        ${WHISPER_GGML_CPP}
-        ${WHISPER_GGML_CPU_C}
-        ${WHISPER_GGML_CPU_CPP}
-        ${WHISPER_GGML_CPU_LLAMAFILE}
-        ${WHISPER_GGML_CPU_AMX}
-    )
-    target_include_directories(whisper_lib PUBLIC
-        "${WHISPER_DIR}"
-        "${WHISPER_DIR}/ggml-include"
-        "${WHISPER_DIR}/ggml-src"
-        "${WHISPER_DIR}/ggml-src/ggml-cpu"
-    )
-    target_compile_definitions(whisper_lib PRIVATE
-        GGML_USE_CPU
-        NDEBUG
-    )
-    set(WHISPER_AVAILABLE TRUE)
-    message(STATUS "whisper.cpp: ENABLED")
-else()
-    set(WHISPER_AVAILABLE FALSE)
-    message(STATUS "whisper.cpp: DISABLED (sources not found)")
-endif()
-
 # --- llama.cpp ---
 # Source: https://github.com/ggerganov/llama.cpp
 # Place llama.cpp source in ime-ai/src/main/cpp/llama/
@@ -104,7 +67,6 @@ if(EXISTS ${KENLM_DIR}/lm/model.cc)
         HAVE_POSIX_MEMALIGN
         NDEBUG
     )
-    # Suppress some warnings in KenLM code
     target_compile_options(kenlm PRIVATE -Wno-unused-parameter -Wno-sign-compare)
     set(KENLM_AVAILABLE TRUE)
 else()
@@ -114,7 +76,6 @@ endif()
 
 # --- JNI Bridge ---
 add_library(nacre-ai SHARED
-    nacre_whisper_jni.cpp
     nacre_llama_jni.cpp
     nacre_kenlm_jni.cpp
 )
@@ -130,11 +91,6 @@ target_link_libraries(nacre-ai
     ${log-lib}
     ${android-lib}
 )
-
-if(WHISPER_AVAILABLE)
-    target_link_libraries(nacre-ai whisper_lib)
-    target_compile_definitions(nacre-ai PRIVATE WHISPER_AVAILABLE)
-endif()
 
 if(LLAMA_AVAILABLE)
     target_link_libraries(nacre-ai llama)

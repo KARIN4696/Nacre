@@ -35,20 +35,6 @@ jobs:
           cp -r /tmp/kenlm-src/lm ime-ai/src/main/cpp/kenlm/
           cp -r /tmp/kenlm-src/util ime-ai/src/main/cpp/kenlm/
 
-      - name: Clone whisper.cpp source
-        run: |
-          git clone --depth 1 --branch v1.7.3 https://github.com/ggerganov/whisper.cpp /tmp/whisper-src
-          DEST=ime-ai/src/main/cpp/whisper
-          mkdir -p $DEST
-          # Whisper core
-          cp /tmp/whisper-src/src/whisper.cpp $DEST/
-          cp /tmp/whisper-src/include/whisper.h $DEST/
-          # GGML — preserve directory structure
-          cp -r /tmp/whisper-src/ggml/src/ $DEST/ggml-src/
-          cp -r /tmp/whisper-src/ggml/include/ $DEST/ggml-include/
-          # Remove GPU backends we don't need
-          rm -rf $DEST/ggml-src/ggml-cuda* $DEST/ggml-src/ggml-metal* $DEST/ggml-src/ggml-vulkan* $DEST/ggml-src/ggml-sycl* $DEST/ggml-src/ggml-kompute* $DEST/ggml-src/ggml-rpc* $DEST/ggml-src/ggml-cann* $DEST/ggml-src/ggml-blas*
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 

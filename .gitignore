@@ -24,3 +24,9 @@ ime-ai/src/main/cpp/kenlm/
 *.keystore
 *.jks
 signing.properties
+
+# Model staging (large files, not for repo)
+models-staging/
+
+# Extracted AAR artifacts
+META-INF/
