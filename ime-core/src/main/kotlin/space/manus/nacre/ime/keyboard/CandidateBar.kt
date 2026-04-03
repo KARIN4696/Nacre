@@ -103,8 +103,8 @@ fun CandidateBar(
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (voiceListening) {
-            // Show voice input status in candidate bar
+        if (voiceListening || voicePartial.isNotEmpty()) {
+            // Show voice input status / "Thinking..." in candidate bar
             Text(
                 text = if (voicePartial.isNotEmpty()) "🎤 $voicePartial"
                        else if (voiceError.isNotEmpty()) "⚠ $voiceError"

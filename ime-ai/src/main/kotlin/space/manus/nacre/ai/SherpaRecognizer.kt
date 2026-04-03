@@ -115,17 +115,22 @@ class SherpaRecognizer {
     }
 
     private fun transcribeSegment(rec: OfflineRecognizer, samples: FloatArray): String {
-        val stream = rec.createStream()
-        stream.acceptWaveform(samples, SAMPLE_RATE)
-        rec.decode(stream)
-        val result = rec.getResult(stream)
-        stream.release()
-        return result.text.trim()
+        return try {
+            val stream = rec.createStream()
+            stream.acceptWaveform(samples, SAMPLE_RATE)
+            rec.decode(stream)
+            val result = rec.getResult(stream)
+            stream.release()
+            result.text.trim()
+        } catch (e: Exception) {
+            Log.e(TAG, "transcribeSegment EXCEPTION: ${e.message}", e)
+            ""
+        }
     }
 
     fun release() {
-        recognizer?.release()
-        vad?.release()
+        try { recognizer?.release() } catch (e: Exception) { Log.e(TAG, "recognizer.release() failed", e) }
+        try { vad?.release() } catch (e: Exception) { Log.e(TAG, "vad.release() failed", e) }
         recognizer = null
         vad = null
         isInitialized = false

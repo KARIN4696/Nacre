@@ -5,21 +5,86 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Post-processes raw voice transcription via local LLM (llama-server).
- * Converts colloquial speech to clean written Japanese.
+ * Post-processes raw voice transcription.
+ *
+ * Two-stage processing:
+ * 1. quickClean() — instant rule-based cleanup (spaces, punctuation, fillers)
+ * 2. refine() — LLM-based refinement (misrecognition fix, rephrasing) via llama-server
  */
 object LlmPostProcessor {
     private const val TAG = "LlmPostProcessor"
     private const val SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
-    private const val TIMEOUT_MS = 15_000
-    private const val SYSTEM_PROMPT = "音声入力の生テキストを書き言葉に整形。フィラー除去、句読点追加。整形後のテキストのみ出力。"
+    private const val TIMEOUT_MS = 30_000
+    private const val SYSTEM_PROMPT = "音声テキスト整形。スペース除去、句読点修正、フィラー除去、言い間違い修正、誤変換修正。整形後のみ出力。"
+
+    // Common fillers to remove
+    private val FILLERS = listOf(
+        "えーと", "えっと", "えー", "あのー", "あの", "まあ", "なんか",
+        "そのー", "その", "ええと", "うーん", "うん", "ああ",
+    )
 
     /**
-     * Refine raw transcription text via LLM.
+     * Stage 1: Instant rule-based cleanup. No network, no delay.
+     * - Remove unnecessary half-width spaces between Japanese chars
+     * - Remove fillers
+     * - Fix common punctuation issues
+     * - Remove leading "？" artifacts from SenseVoice
+     */
+    fun quickClean(rawText: String): String {
+        if (rawText.isBlank()) return rawText
+        var text = rawText
+
+        // Remove leading "？" (SenseVoice artifact when recording starts with silence)
+        text = text.trimStart('？', '?')
+
+        // Remove fillers (longest first to avoid partial matches)
+        for (filler in FILLERS.sortedByDescending { it.length }) {
+            text = text.replace(filler, "")
+        }
+
+        // Remove half-width spaces between Japanese characters
+        // Keep spaces between ASCII words (e.g., "Hello World")
+        val sb = StringBuilder()
+        var i = 0
+        while (i < text.length) {
+            if (text[i] == ' ' && i > 0 && i < text.length - 1) {
+                val prev = text[i - 1]
+                val next = text[i + 1]
+                // Skip space if either neighbor is a Japanese/CJK character
+                if (isJapaneseCjk(prev) || isJapaneseCjk(next)) {
+                    i++
+                    continue
+                }
+            }
+            sb.append(text[i])
+            i++
+        }
+        text = sb.toString()
+
+        // Fix double punctuation
+        text = text.replace("。。", "。")
+            .replace("、、", "、")
+            .replace("？？", "？")
+
+        // Remove empty results
+        text = text.trim()
+
+        writeDiag("quickClean: '${rawText.take(60)}' → '${text.take(60)}'")
+        return text
+    }
+
+    private fun isJapaneseCjk(c: Char): Boolean {
+        val code = c.code
+        return code in 0x3000..0x9FFF || code in 0xF900..0xFAFF || code in 0xFF00..0xFFEF
+    }
+
+    /**
+     * Stage 2: LLM-based refinement via local llama-server.
      * Returns refined text, or original text if LLM is unavailable.
      */
     fun refine(rawText: String): String {
         if (rawText.isBlank()) return rawText
+        writeDiag("refine() called: '${rawText.take(80)}'")
         try {
             val requestBody = """
                 {"messages":[
@@ -28,6 +93,7 @@ object LlmPostProcessor {
                 ],"temperature":0.3,"max_tokens":${rawText.length * 3}}
             """.trimIndent()
 
+            writeDiag("Connecting to $SERVER_URL ...")
             val conn = (URL(SERVER_URL).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json")
@@ -37,13 +103,14 @@ object LlmPostProcessor {
             }
             conn.outputStream.use { it.write(requestBody.toByteArray()) }
 
-            if (conn.responseCode != 200) {
-                Log.w(TAG, "LLM server returned ${conn.responseCode}")
+            val code = conn.responseCode
+            writeDiag("HTTP response: $code")
+            if (code != 200) {
                 return rawText
             }
 
             val response = conn.inputStream.bufferedReader().readText()
-            // Simple JSON extraction without dependency
+            writeDiag("Response: ${response.take(200)}")
             val contentStart = response.indexOf("\"content\":\"") + 11
             val contentEnd = response.indexOf("\"", contentStart + 1)
             if (contentStart > 10 && contentEnd > contentStart) {
@@ -51,22 +118,20 @@ object LlmPostProcessor {
                     .replace("\\n", "\n")
                     .replace("\\\"", "\"")
                     .replace("\\\\", "\\")
-                Log.i(TAG, "Refined: '$rawText' → '$refined'")
+                writeDiag("Refined: '${rawText.take(60)}' → '${refined.take(60)}'")
                 return refined.ifBlank { rawText }
             }
+            writeDiag("Failed to parse content from response")
         } catch (e: java.net.ConnectException) {
-            Log.d(TAG, "LLM server not running, using raw text")
+            writeDiag("ConnectException: ${e.message}")
         } catch (e: java.net.SocketTimeoutException) {
-            Log.w(TAG, "LLM server timeout")
+            writeDiag("SocketTimeoutException: ${e.message}")
         } catch (e: Exception) {
-            Log.w(TAG, "LLM post-processing failed", e)
+            writeDiag("Exception: ${e.javaClass.simpleName}: ${e.message}")
         }
         return rawText
     }
 
-    /**
-     * Check if llama-server is running and responding.
-     */
     fun isAvailable(): Boolean {
         return try {
             val conn = URL("http://127.0.0.1:8080/health").openConnection() as HttpURLConnection
@@ -76,6 +141,19 @@ object LlmPostProcessor {
             conn.disconnect()
             ok
         } catch (_: Exception) { false }
+    }
+
+    private fun writeDiag(message: String) {
+        try {
+            val file = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                ),
+                "nacre-llm-debug.txt"
+            )
+            val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+            file.appendText("[$ts] $message\n")
+        } catch (_: Exception) {}
     }
 
     private fun jsonEscape(s: String): String {

@@ -71,35 +71,37 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
             val svc = IWhisperService.Stub.asInterface(binder)
             whisperBound = true
-            Log.i(TAG, "WhisperService onServiceConnected")
-            // Load SenseVoice model in background
+            writeDiagnostic("onServiceConnected: WhisperService bound")
             Thread {
                 try {
                     if (!svc.isModelLoaded) {
                         val downloader = space.manus.nacre.ai.ModelDownloader(service)
                         val modelDir = downloader.getSenseVoiceModelDir()
                         val vadPath = downloader.getVadModelPath()
-                        Log.i(TAG, "SenseVoice model search: dir=$modelDir, vad=$vadPath")
+                        writeDiagnostic("onServiceConnected: modelDir=$modelDir, vadPath=$vadPath")
                         if (modelDir != null && vadPath != null) {
-                            // Pass both paths separated by "|"
                             svc.loadModel("$modelDir|$vadPath")
-                            // Wait for model to load (up to 60 seconds)
                             for (i in 0 until 120) {
                                 Thread.sleep(500)
                                 if (svc.isModelLoaded) break
                             }
+                            if (!svc.isModelLoaded) {
+                                writeDiagnostic("onServiceConnected: model load TIMEOUT after 60s")
+                            }
                         } else {
-                            Log.w(TAG, "SenseVoice model not found on device (dir=$modelDir, vad=$vadPath)")
+                            writeDiagnostic("onServiceConnected: model NOT FOUND (dir=$modelDir, vad=$vadPath)")
                         }
+                    } else {
+                        writeDiagnostic("onServiceConnected: model already loaded")
                     }
                     if (svc.isModelLoaded) {
                         whisperService = svc
-                        Log.i(TAG, "WhisperService ready, SenseVoice model loaded")
+                        writeDiagnostic("onServiceConnected: SUCCESS, whisperService set")
                     } else {
-                        Log.w(TAG, "SenseVoice model failed to load, using SpeechRecognizer fallback")
+                        writeDiagnostic("onServiceConnected: FAIL, model not loaded, fallback to SpeechRecognizer")
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "WhisperService init failed", e)
+                    writeDiagnostic("onServiceConnected EXCEPTION: ${e.message}")
                 }
             }.start()
         }
@@ -127,6 +129,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
     private val whisperCallback = object : IWhisperCallback.Stub() {
         override fun onResult(text: String) {
+            writeDiagnostic("whisperCallback.onResult: text='${text.take(80)}' (${text.length} chars)")
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 isWhisperContinuousMode = false
                 isListening = false
@@ -135,31 +138,53 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 releaseAudioFocus()
 
                 if (text.isNotBlank()) {
-                    // Show loading state while LLM processes
-                    service.currentInputConnection?.setComposingText("整形中...", 1)
+                    // Stage 1: Instant rule-based cleanup → commit immediately
+                    val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(text)
+                    writeDiagnostic("whisperCallback.onResult: quickClean='${cleaned.take(80)}'")
+                    val ic = service.currentInputConnection
+                    ic?.commitText(cleaned, 1)
 
-                    // LLM post-processing in background
+                    // Stage 2: LLM refinement in background → replace if better
+                    partialText = "Thinking..."
+                    val cleanedLen = cleaned.length
                     Thread {
-                        val refined = space.manus.nacre.ai.LlmPostProcessor.refine(text)
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            service.currentInputConnection?.finishComposingText()
-                            service.currentInputConnection?.commitText(refined, 1)
+                        try {
+                            val refined = space.manus.nacre.ai.LlmPostProcessor.refine(cleaned)
+                            writeDiagnostic("whisperCallback.onResult: refined='${refined.take(80)}'")
+                            if (refined != cleaned && refined.isNotBlank()) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    partialText = ""
+                                    val ic2 = service.currentInputConnection ?: return@post
+                                    // Delete the quickClean text and replace with LLM result
+                                    ic2.beginBatchEdit()
+                                    ic2.deleteSurroundingText(cleanedLen, 0)
+                                    ic2.commitText(refined, 1)
+                                    ic2.endBatchEdit()
+                                }
+                            } else {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    partialText = ""
+                                }
+                            }
+                        } catch (e: Exception) {
+                            writeDiagnostic("whisperCallback.onResult THREAD EXCEPTION: ${e.message}")
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                partialText = ""
+                            }
                         }
                     }.start()
                 } else {
-                    service.currentInputConnection?.finishComposingText()
+                    writeDiagnostic("whisperCallback.onResult: text is BLANK, skipping")
                 }
             }
         }
 
         override fun onPartialResult(text: String) {
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                partialText = text
-                service.currentInputConnection?.setComposingText(text, 1)
-            }
+            // Typeless-style: no preview during recording.
         }
 
         override fun onError(message: String) {
+            writeDiagnostic("whisperCallback.onError: $message")
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 Log.w(TAG, "Whisper error: $message")
                 isWhisperContinuousMode = false
@@ -345,9 +370,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     }
 
     fun stopListening() {
+        writeDiagnostic("stopListening: whisperMode=$isWhisperContinuousMode, whisperService=${whisperService != null}")
         if (isWhisperContinuousMode) {
-            // Stop recognition first (while audio focus is still held),
-            // then reset state. The callback will commit final text asynchronously.
             isWhisperContinuousMode = false
             isListening = false
             partialText = ""
@@ -355,9 +379,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
             try {
                 whisperService?.stopRecognition()
             } catch (e: android.os.RemoteException) {
-                Log.w(TAG, "Whisper stopRecognition IPC failed", e)
-                // IPC failed — service may be dead. Commit composing text locally
-                // so user doesn't lose what was shown as composing preview.
+                writeDiagnostic("stopListening: IPC FAILED: ${e.message}")
                 service.currentInputConnection?.finishComposingText()
             }
             // Release audio focus AFTER stopRecognition IPC — recording may still be
@@ -1016,32 +1038,57 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
 
         override fun onResults(results: Bundle?) {
             val text = selectBestResult(results)
+            writeDiagnostic("SpeechRecognizer.onResults: text='${text.take(80)}' (${text.length} chars)")
 
-            // Commit immediately — each utterance is committed as it arrives.
-            // Continuous mode ensures the recognizer restarts instantly,
-            // so the user can keep talking through pauses.
             if (text.isNotEmpty()) {
+                val asciiRatio = text.count { it.code in 0x20..0x7E }.toFloat() / text.length
+                currentLanguage = if (asciiRatio > 0.7f) "en-US" else "ja-JP"
+
                 val converted = convertVoiceCommands(text)
                 val spaced = addUtteranceSpacing(converted)
                 val withCommas = insertMidSentenceCommas(spaced)
                 val processed = smartPunctuation(withCommas)
-                service.currentInputConnection?.commitText(processed, 1)
-                committedInSession.append(processed)
+
+                // Stage 1: Instant cleanup → commit immediately
+                val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(processed)
+                val ic = service.currentInputConnection
+                ic?.commitText(cleaned, 1)
+                committedInSession.append(cleaned)
                 utteranceCount++
+
+                // Stage 2: LLM refinement → replace if better
+                partialText = "Thinking..."
+                val cleanedLen = cleaned.length
+                Thread {
+                    try {
+                        val refined = space.manus.nacre.ai.LlmPostProcessor.refine(cleaned)
+                        writeDiagnostic("SpeechRecognizer.onResults: refined='${refined.take(80)}'")
+                        if (refined != cleaned && refined.isNotBlank()) {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                partialText = ""
+                                val ic2 = service.currentInputConnection ?: return@post
+                                ic2.beginBatchEdit()
+                                ic2.deleteSurroundingText(cleanedLen, 0)
+                                ic2.commitText(refined, 1)
+                                ic2.endBatchEdit()
+                            }
+                        } else {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post { partialText = "" }
+                        }
+                    } catch (e: Exception) {
+                        writeDiagnostic("SpeechRecognizer.onResults THREAD EXCEPTION: ${e.message}")
+                        android.os.Handler(android.os.Looper.getMainLooper()).post { partialText = "" }
+                    }
+                }.start()
+            } else {
+                writeDiagnostic("SpeechRecognizer.onResults: EMPTY text, skipping")
             }
 
-            partialText = ""
             rmsLevel = 0f
             lastCommittedPartial = ""
             partialStableCount = 0
             lastPartialText = ""
             consecutiveErrors = 0
-
-            // Auto-detect language for next utterance
-            if (text.isNotEmpty()) {
-                val asciiRatio = text.count { it.code in 0x20..0x7E }.toFloat() / text.length
-                currentLanguage = if (asciiRatio > 0.7f) "en-US" else "ja-JP"
-            }
 
             // Zero-gap continuous restart — recognizer restarts instantly
             // so the user never has to tap again. Silence is fine.
@@ -1054,10 +1101,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
-            val text = partialResults
-                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                ?.firstOrNull() ?: ""
-            partialText = text
+            // Typeless-style: no preview during recording.
         }
 
         override fun onEvent(eventType: Int, params: Bundle?) {}

@@ -44,26 +44,32 @@ class WhisperService : Service() {
         }
 
         override fun loadModel(modelPath: String) {
+            writeDiag("loadModel called: $modelPath")
             scope.launch {
                 try {
                     // modelPath format: "modelDir|vadModelPath"
                     val parts = modelPath.split("|", limit = 2)
                     val modelDir = parts[0]
                     val vadPath = if (parts.size > 1) parts[1] else ""
-                    Log.i(TAG, "Loading SenseVoice model: dir=$modelDir, vad=$vadPath")
+                    writeDiag("Loading SenseVoice: dir=$modelDir, vad=$vadPath")
+                    val modelFile = java.io.File(modelDir, "model.int8.onnx")
+                    val vadFile = java.io.File(vadPath)
+                    writeDiag("model.int8.onnx exists=${modelFile.exists()} size=${modelFile.length()}")
+                    writeDiag("silero_vad.onnx exists=${vadFile.exists()} size=${vadFile.length()}")
 
                     val rec = SherpaRecognizer()
                     val ok = rec.initialize(modelDir, vadPath)
+                    writeDiag("SherpaRecognizer.initialize() result=$ok")
                     if (ok) {
                         sherpaRecognizer?.release()
                         sherpaRecognizer = rec
-                        Log.i(TAG, "SenseVoice model loaded successfully")
+                        writeDiag("SenseVoice model loaded successfully")
                     } else {
-                        Log.e(TAG, "Failed to initialize SherpaRecognizer")
+                        writeDiag("FAILED to initialize SherpaRecognizer")
                         rec.release()
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Model loading failed", e)
+                    writeDiag("loadModel EXCEPTION: ${e.message}\n${e.stackTraceToString()}")
                 }
             }
         }
@@ -109,6 +115,7 @@ class WhisperService : Service() {
         }
 
         override fun stopRecognition() {
+            writeDiag("stopRecognition: recordingJob=${recordingJob != null}, cb=${continuousCallback != null}")
             val job = recordingJob
             if (job != null) {
                 val cb = continuousCallback
@@ -122,19 +129,27 @@ class WhisperService : Service() {
                     job.cancel()
                     job.join()
 
-                    // Flush remaining audio
-                    val rec = sherpaRecognizer
-                    if (rec != null) {
-                        val flushed = rec.flush()
-                        if (flushed.isNotEmpty()) {
-                            buf.append(flushed.joinToString(""))
+                    try {
+                        val rec = sherpaRecognizer
+                        if (rec != null) {
+                            val flushed = rec.flush()
+                            if (flushed.isNotEmpty()) {
+                                buf.append(flushed.joinToString(""))
+                            }
+                            rec.reset()
                         }
-                        rec.reset()
+                    } catch (e: Exception) {
+                        writeDiag("stopRecognition flush EXCEPTION: ${e.message}")
                     }
 
                     val finalText = buf.toString()
+                    writeDiag("stopRecognition: finalText='${finalText.take(100)}' (${finalText.length} chars)")
                     try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
-                    try { cb?.onResult(finalText) } catch (_: RemoteException) {}
+                    try {
+                        cb?.onResult(finalText)
+                    } catch (e: RemoteException) {
+                        writeDiag("stopRecognition: onResult IPC FAILED, text LOST: '${finalText.take(80)}'")
+                    }
                 }
                 return
             }
@@ -143,11 +158,14 @@ class WhisperService : Service() {
         }
 
         override fun startContinuousRecognition(language: String, callback: IWhisperCallback) {
+            writeDiag("startContinuousRecognition: isRecognizing=$isRecognizing, sherpaReady=${sherpaRecognizer?.isReady()}")
             if (this@WhisperService.isRecognizing) {
+                writeDiag("startContinuousRecognition: REJECTED, already recognizing")
                 try { callback.onError("Already recognizing") } catch (_: RemoteException) {}
                 return
             }
             if (sherpaRecognizer?.isReady() != true) {
+                writeDiag("startContinuousRecognition: REJECTED, model not loaded")
                 try { callback.onError("Model not loaded") } catch (_: RemoteException) {}
                 return
             }
@@ -170,7 +188,7 @@ class WhisperService : Service() {
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to start foreground service", e)
+                writeDiag("startContinuousRecognition: foreground service FAILED: ${e.message}")
             }
 
             this@WhisperService.isRecognizing = true
@@ -191,12 +209,17 @@ class WhisperService : Service() {
                     bufferSize * 2
                 )
                 recorder.startRecording()
+                writeDiag("AudioRecord state=${recorder.state}, recordingState=${recorder.recordingState}")
 
                 // Read 512 samples per iteration (matches Silero VAD window size)
                 val readBuffer = FloatArray(VAD_WINDOW_SIZE)
                 val maxReads = SAMPLE_RATE * CONTINUOUS_MAX_DURATION_SEC / VAD_WINDOW_SIZE
                 var totalReads = 0
-                val rec = sherpaRecognizer ?: return@launch
+                val rec = sherpaRecognizer ?: run {
+                    writeDiag("ERROR: sherpaRecognizer is null in recording loop")
+                    return@launch
+                }
+                writeDiag("Recording started, sherpaRecognizer ready=${rec.isReady()}")
 
                 try {
                     while (isActive && totalReads < maxReads) {
@@ -211,6 +234,7 @@ class WhisperService : Service() {
                             for (text in segments) {
                                 textBuffer.append(text)
                             }
+                            writeDiag("Segment detected: '${textBuffer}' (totalReads=$totalReads)")
                             try {
                                 continuousCallback?.onPartialResult(textBuffer.toString())
                             } catch (_: RemoteException) {
@@ -359,6 +383,19 @@ class WhisperService : Service() {
         sherpaRecognizer?.release()
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun writeDiag(message: String) {
+        try {
+            val file = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                ),
+                "nacre-whisper-debug.txt"
+            )
+            val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+            file.appendText("[$ts] $message\n")
+        } catch (_: Exception) {}
     }
 
     companion object {
