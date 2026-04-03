@@ -31,7 +31,7 @@ class SherpaRecognizer {
                 modelConfig = OfflineModelConfig(
                     senseVoice = OfflineSenseVoiceModelConfig(
                         model = "$modelDir/model.int8.onnx",
-                        language = "ja",
+                        language = "auto",
                         useInverseTextNormalization = true,
                     ),
                     tokens = "$modelDir/tokens.txt",

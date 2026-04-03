@@ -103,15 +103,18 @@ fun CandidateBar(
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (voiceListening || voicePartial.isNotEmpty()) {
-            // Show voice input status / "Thinking..." in candidate bar
+        if (voiceListening || voicePartial == "Thinking...") {
             Text(
-                text = if (voicePartial.isNotEmpty()) "🎤 $voicePartial"
-                       else if (voiceError.isNotEmpty()) "⚠ $voiceError"
-                       else "🎤 音声入力中...",
-                color = if (voiceError.isNotEmpty()) Color(0xFFFF6666)
-                        else if (voicePartial.isNotEmpty()) Color(0xFFFFAAAA)
-                        else Color(0xFFFF8888),
+                text = when {
+                    voicePartial == "Thinking..." -> "🤔 Thinking..."
+                    voiceError.isNotEmpty() -> "⚠ $voiceError"
+                    else -> "🎤 音声入力中..."
+                },
+                color = when {
+                    voicePartial == "Thinking..." -> Color(0xFFAADDFF)
+                    voiceError.isNotEmpty() -> Color(0xFFFF6666)
+                    else -> Color(0xFFFF8888)
+                },
                 fontSize = 12.sp,
                 maxLines = 1,
             )

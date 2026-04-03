@@ -138,38 +138,24 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 releaseAudioFocus()
 
                 if (text.isNotBlank()) {
-                    // Stage 1: Instant rule-based cleanup → commit immediately
                     val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(text)
                     writeDiagnostic("whisperCallback.onResult: quickClean='${cleaned.take(80)}'")
-                    val ic = service.currentInputConnection
-                    ic?.commitText(cleaned, 1)
-
-                    // Stage 2: LLM refinement in background → replace if better
                     partialText = "Thinking..."
-                    val cleanedLen = cleaned.length
+
                     Thread {
                         try {
                             val refined = space.manus.nacre.ai.LlmPostProcessor.refine(cleaned)
                             writeDiagnostic("whisperCallback.onResult: refined='${refined.take(80)}'")
-                            if (refined != cleaned && refined.isNotBlank()) {
-                                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                    partialText = ""
-                                    val ic2 = service.currentInputConnection ?: return@post
-                                    // Delete the quickClean text and replace with LLM result
-                                    ic2.beginBatchEdit()
-                                    ic2.deleteSurroundingText(cleanedLen, 0)
-                                    ic2.commitText(refined, 1)
-                                    ic2.endBatchEdit()
-                                }
-                            } else {
-                                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                    partialText = ""
-                                }
+                            val result = if (refined.isNotBlank()) refined else cleaned
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                partialText = ""
+                                service.currentInputConnection?.commitText(result, 1)
                             }
                         } catch (e: Exception) {
                             writeDiagnostic("whisperCallback.onResult THREAD EXCEPTION: ${e.message}")
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
                                 partialText = ""
+                                service.currentInputConnection?.commitText(cleaned, 1)
                             }
                         }
                     }.start()
@@ -1049,35 +1035,28 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 val withCommas = insertMidSentenceCommas(spaced)
                 val processed = smartPunctuation(withCommas)
 
-                // Stage 1: Instant cleanup → commit immediately
                 val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(processed)
-                val ic = service.currentInputConnection
-                ic?.commitText(cleaned, 1)
-                committedInSession.append(cleaned)
-                utteranceCount++
-
-                // Stage 2: LLM refinement → replace if better
                 partialText = "Thinking..."
-                val cleanedLen = cleaned.length
+
                 Thread {
                     try {
                         val refined = space.manus.nacre.ai.LlmPostProcessor.refine(cleaned)
                         writeDiagnostic("SpeechRecognizer.onResults: refined='${refined.take(80)}'")
-                        if (refined != cleaned && refined.isNotBlank()) {
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                partialText = ""
-                                val ic2 = service.currentInputConnection ?: return@post
-                                ic2.beginBatchEdit()
-                                ic2.deleteSurroundingText(cleanedLen, 0)
-                                ic2.commitText(refined, 1)
-                                ic2.endBatchEdit()
-                            }
-                        } else {
-                            android.os.Handler(android.os.Looper.getMainLooper()).post { partialText = "" }
+                        val result = if (refined.isNotBlank()) refined else cleaned
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            partialText = ""
+                            service.currentInputConnection?.commitText(result, 1)
+                            committedInSession.append(result)
+                            utteranceCount++
                         }
                     } catch (e: Exception) {
                         writeDiagnostic("SpeechRecognizer.onResults THREAD EXCEPTION: ${e.message}")
-                        android.os.Handler(android.os.Looper.getMainLooper()).post { partialText = "" }
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            partialText = ""
+                            service.currentInputConnection?.commitText(cleaned, 1)
+                            committedInSession.append(cleaned)
+                            utteranceCount++
+                        }
                     }
                 }.start()
             } else {
