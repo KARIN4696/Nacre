@@ -25,65 +25,102 @@ object LlmPostProcessor {
         "7.意味を保ったまま自然な書き言葉に整える " +
         "8.疑問文は「？」で終える"
 
-    // Common fillers to remove
+    // Fillers sorted longest-first to avoid partial matches
     private val FILLERS = listOf(
-        "えーと", "えっと", "えー", "あのー", "あの", "まあ", "なんか",
-        "そのー", "その", "ええと", "うーん", "うん", "ああ",
+        "えーっと", "えっと", "えーと", "あのー", "そのー", "ええと",
+        "えー", "あー", "うーん", "あの", "まあ", "なんか", "こう",
+        "その", "うん", "ん",
+    ).sortedByDescending { it.length }
+
+    // Technical term dictionary (katakana → proper notation)
+    private val TECH_TERMS = mapOf(
+        "エーピーアイ" to "API", "エルエルエム" to "LLM",
+        "ジーピーティー" to "GPT", "チャットジーピーティー" to "ChatGPT",
+        "ピーティーワイ" to "PTY", "ジェイソン" to "JSON",
+        "エイチティーティーピー" to "HTTP", "ユーアールエル" to "URL",
+        "エスキューエル" to "SQL", "ギットハブ" to "GitHub", "ギット" to "Git",
+        "タイプスクリプト" to "TypeScript", "コトリン" to "Kotlin",
+        "リアクト" to "React", "アンドロイド" to "Android",
+        "エーピーケー" to "APK", "えーあい" to "AI",
+        "ウィスパー" to "Whisper", "シェルパ" to "sherpa",
+        "センスボイス" to "SenseVoice", "タイプレス" to "Typeless",
+    ).entries.sortedByDescending { it.key.length }
+
+    // Particles that continue a clause (「。」 before these = false sentence break)
+    private val CONTINUATION_PARTICLES = Regex(
+        "。([がはをにでともへ]|より|から|まで|けど|けれど|ので|のに|たら|ば|て|ながら|つつ|し|ところ|って)"
+    )
+
+    // Question-ending patterns
+    private val QUESTION_ENDINGS = Regex(
+        "(ですか|ますか|でしょうか|かな|よね|だろう|じゃない|でしょ|なの|ないの|のか|んですか|ませんか)。"
     )
 
     /**
-     * Stage 1: Instant rule-based cleanup. No network, no delay.
-     * - Remove unnecessary half-width spaces between Japanese chars
-     * - Remove fillers
-     * - Fix common punctuation issues
-     * - Remove leading "？" artifacts from SenseVoice
+     * Instant rule-based cleanup. No network, no delay.
+     *
+     * Processing order:
+     * A. Artifact removal (leading ？, fillers)
+     * B. Technical term dictionary
+     * C. Half-width space removal (Japanese context)
+     * D. Mid-sentence 「。」 fix (before continuation particles)
+     * E. Duplicate phrase removal
+     * F. Punctuation cleanup
+     * G. Question detection
      */
     fun quickClean(rawText: String): String {
         if (rawText.isBlank()) return rawText
         var text = rawText
 
-        // Remove leading "？" (SenseVoice artifact when recording starts with silence)
+        // A. Remove leading/trailing ？ artifacts
         text = text.trimStart('？', '?')
 
-        // Remove fillers (longest first to avoid partial matches)
-        for (filler in FILLERS.sortedByDescending { it.length }) {
+        // A. Remove fillers
+        for (filler in FILLERS) {
             text = text.replace(filler, "")
         }
 
-        // Remove half-width spaces between Japanese characters
-        // Keep spaces between ASCII words (e.g., "Hello World")
-        val sb = StringBuilder()
-        var i = 0
-        while (i < text.length) {
-            if (text[i] == ' ' && i > 0 && i < text.length - 1) {
-                val prev = text[i - 1]
-                val next = text[i + 1]
-                // Skip space if either neighbor is a Japanese/CJK character
-                if (isJapaneseCjk(prev) || isJapaneseCjk(next)) {
-                    i++
-                    continue
-                }
-            }
-            sb.append(text[i])
-            i++
+        // B. Technical term dictionary
+        for ((kana, term) in TECH_TERMS) {
+            text = text.replace(kana, term)
         }
-        text = sb.toString()
 
-        // Fix double punctuation
+        // C. Remove half-width spaces between Japanese/CJK characters
+        text = text.replace(
+            Regex("([\\u3000-\\u9FFF\\uF900-\\uFAFF\\uFF00-\\uFFEF])\\s+([\\u3000-\\u9FFF\\uF900-\\uFAFF\\uFF00-\\uFFEF])"),
+            "$1$2"
+        )
+
+        // D. Remove false mid-sentence 「。」 before continuation particles
+        text = text.replace(CONTINUATION_PARTICLES, "$1")
+
+        // E. Duplicate phrase removal (immediate repetition of 2-8 char phrases)
+        text = text.replace(Regex("(.{2,8})\\1"), "$1")
+
+        // F. Punctuation cleanup
         text = text.replace("。。", "。")
             .replace("、、", "、")
             .replace("？？", "？")
+            .replace("。？", "？")
+            .replace("。、", "、")
 
-        // Remove empty results
-        text = text.trim()
+        // F. Collapse multiple spaces
+        text = text.replace(Regex(" +"), " ")
+
+        // F. Remove leading punctuation artifacts
+        text = text.trimStart('。', '、', ' ').trim()
+
+        // G. Question detection: 「ですか。」→「ですか？」
+        text = text.replace(QUESTION_ENDINGS, "$1？")
+
+        // G. Ensure question sentences with interrogative words end with ？
+        text = text.replace(
+            Regex("((?:何|どう|いつ|どこ|どれ|なぜ|なんで|どうして)[^。？]{0,30})。"),
+            "$1？"
+        )
 
         writeDiag("quickClean: '${rawText.take(60)}' → '${text.take(60)}'")
         return text
-    }
-
-    private fun isJapaneseCjk(c: Char): Boolean {
-        val code = c.code
-        return code in 0x3000..0x9FFF || code in 0xF900..0xFAFF || code in 0xFF00..0xFFEF
     }
 
     /**

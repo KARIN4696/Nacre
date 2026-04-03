@@ -140,25 +140,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 if (text.isNotBlank()) {
                     val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(text)
                     writeDiagnostic("whisperCallback.onResult: quickClean='${cleaned.take(80)}'")
-                    partialText = "Thinking..."
-
-                    Thread {
-                        try {
-                            val refined = space.manus.nacre.ai.LlmPostProcessor.refine(cleaned)
-                            writeDiagnostic("whisperCallback.onResult: refined='${refined.take(80)}'")
-                            val result = if (refined.isNotBlank()) refined else cleaned
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                partialText = ""
-                                service.currentInputConnection?.commitText(result, 1)
-                            }
-                        } catch (e: Exception) {
-                            writeDiagnostic("whisperCallback.onResult THREAD EXCEPTION: ${e.message}")
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                partialText = ""
-                                service.currentInputConnection?.commitText(cleaned, 1)
-                            }
-                        }
-                    }.start()
+                    service.currentInputConnection?.commitText(cleaned, 1)
                 } else {
                     writeDiagnostic("whisperCallback.onResult: text is BLANK, skipping")
                 }
@@ -1036,29 +1018,9 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 val processed = smartPunctuation(withCommas)
 
                 val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(processed)
-                partialText = "Thinking..."
-
-                Thread {
-                    try {
-                        val refined = space.manus.nacre.ai.LlmPostProcessor.refine(cleaned)
-                        writeDiagnostic("SpeechRecognizer.onResults: refined='${refined.take(80)}'")
-                        val result = if (refined.isNotBlank()) refined else cleaned
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            partialText = ""
-                            service.currentInputConnection?.commitText(result, 1)
-                            committedInSession.append(result)
-                            utteranceCount++
-                        }
-                    } catch (e: Exception) {
-                        writeDiagnostic("SpeechRecognizer.onResults THREAD EXCEPTION: ${e.message}")
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            partialText = ""
-                            service.currentInputConnection?.commitText(cleaned, 1)
-                            committedInSession.append(cleaned)
-                            utteranceCount++
-                        }
-                    }
-                }.start()
+                service.currentInputConnection?.commitText(cleaned, 1)
+                committedInSession.append(cleaned)
+                utteranceCount++
             } else {
                 writeDiagnostic("SpeechRecognizer.onResults: EMPTY text, skipping")
             }
