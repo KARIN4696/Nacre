@@ -62,7 +62,7 @@ class ModelDownloader(private val context: Context) {
         return mapOf(
             "sensevoice" to (getSenseVoiceModelDir() != null),
             "vad" to (getVadModelPath() != null),
-            "llm" to File(getModelsDir(), "gemma-3-1b-q4.gguf").exists(),
+            "llm" to File(getModelsDir(), LLM_FILENAME).exists(),
             "kenlm" to File(getModelsDir(), KENLM_FILENAME).exists(),
         )
     }
@@ -401,6 +401,7 @@ class ModelDownloader(private val context: Context) {
         const val SENSEVOICE_DIR = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
         const val VAD_FILENAME = "silero_vad.onnx"
         const val KENLM_FILENAME = "japanese-5gram.klm"
+        const val LLM_FILENAME = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
         const val KENLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/japanese-5gram.klm"
     }
 }

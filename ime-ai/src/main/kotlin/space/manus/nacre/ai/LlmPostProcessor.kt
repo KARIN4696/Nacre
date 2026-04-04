@@ -14,16 +14,9 @@ import java.net.URL
 object LlmPostProcessor {
     private const val TAG = "LlmPostProcessor"
     private const val SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
-    private const val TIMEOUT_MS = 30_000
-    private const val SYSTEM_PROMPT = "あなたは音声入力テキストの整形AIです。以下の規則に従い整形後テキストのみ出力せよ。" +
-        "1.不要なスペースを全て除去 " +
-        "2.句読点:文末に「。」、列挙・接続に「、」を適切配置。不要な句点は除去 " +
-        "3.フィラー(えー,あの,まあ,うーん等)を除去 " +
-        "4.言い間違い:言い直しは後の正しい方を採用(例:「かいすい…解析」→「解析」) " +
-        "5.誤変換:文脈から正しい漢字に修正(例:「回水」→「解析」「繁映」→「反映」「レレム」→「LLM」) " +
-        "6.冗長な繰り返しを1回にまとめる " +
-        "7.意味を保ったまま自然な書き言葉に整える " +
-        "8.疑問文は「？」で終える"
+    private const val TIMEOUT_MS = 8_000
+    private const val SYSTEM_PROMPT = "音声テキスト整形AI。整形後テキストのみ出力。" +
+        "規則:スペース除去/句読点適切配置/フィラー除去/言い直し→後の方採用/誤変換修正/繰り返し除去/自然な書き言葉化/疑問文は？"
 
     // Fillers sorted longest-first to avoid partial matches
     // Note: single-char "ん" removed — too aggressive, breaks "なん", "んです" etc.
@@ -180,7 +173,7 @@ object LlmPostProcessor {
                 {"messages":[
                     {"role":"system","content":"$SYSTEM_PROMPT"},
                     {"role":"user","content":${jsonEscape(rawText)}}
-                ],"temperature":0.3,"max_tokens":${rawText.length * 3}}
+                ],"temperature":0.1,"max_tokens":${rawText.length * 2}}
             """.trimIndent()
 
             writeDiag("Connecting to $SERVER_URL ...")

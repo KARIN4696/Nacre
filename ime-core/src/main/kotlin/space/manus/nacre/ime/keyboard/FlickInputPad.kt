@@ -176,17 +176,26 @@ private fun FlickAlphaGrid(
     val h = FLICK_ROW_HEIGHT.dp
     val sw = SIDE_WEIGHT
 
-    // Gboard-style alpha keys: each key has multiple letters
+    // Alpha keys: flick for directional input, multi-tap for garakei-style cycling
     val alphaKeys = listOf(
-        FlickEngine.FlickKey("@", "@", "@", "#", "&", "_", "%"),
-        FlickEngine.FlickKey("abc", "a", "a", "b", "c"),
-        FlickEngine.FlickKey("def", "d", "d", "e", "f"),
-        FlickEngine.FlickKey("ghi", "g", "g", "h", "i"),
-        FlickEngine.FlickKey("jkl", "j", "j", "k", "l"),
-        FlickEngine.FlickKey("mno", "m", "m", "n", "o"),
-        FlickEngine.FlickKey("pqrs", "p", "q", "r", "s"),
-        FlickEngine.FlickKey("tuv", "t", "t", "u", "v"),
-        FlickEngine.FlickKey("wxyz", "w", "x", "y", "z"),
+        FlickEngine.FlickKey("@", "@", "@", "#", "&", "_", "%",
+            tapCycle = listOf("@", "#", "&", "_", "%")),
+        FlickEngine.FlickKey("abc", "abc", "a", left = "a", up = "b", right = "c",
+            tapCycle = listOf("a", "b", "c")),
+        FlickEngine.FlickKey("def", "def", "d", left = "d", up = "e", right = "f",
+            tapCycle = listOf("d", "e", "f")),
+        FlickEngine.FlickKey("ghi", "ghi", "g", left = "g", up = "h", right = "i",
+            tapCycle = listOf("g", "h", "i")),
+        FlickEngine.FlickKey("jkl", "jkl", "j", left = "j", up = "k", right = "l",
+            tapCycle = listOf("j", "k", "l")),
+        FlickEngine.FlickKey("mno", "mno", "m", left = "m", up = "n", right = "o",
+            tapCycle = listOf("m", "n", "o")),
+        FlickEngine.FlickKey("pqrs", "pqrs", "p", left = "q", up = "r", right = "s",
+            tapCycle = listOf("p", "q", "r", "s")),
+        FlickEngine.FlickKey("tuv", "tuv", "t", left = "t", up = "u", right = "v",
+            tapCycle = listOf("t", "u", "v")),
+        FlickEngine.FlickKey("wxyz", "wxyz", "w", left = "x", up = "y", right = "z",
+            tapCycle = listOf("w", "x", "y", "z")),
     )
 
     // Punctuation for alpha mode

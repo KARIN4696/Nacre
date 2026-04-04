@@ -141,6 +141,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                     val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(text)
                     writeDiagnostic("whisperCallback.onResult: quickClean='${cleaned.take(80)}'")
                     service.currentInputConnection?.commitText(cleaned, 1)
+                    // Stage 2: LLM refinement in background, replace quickClean result if better
+                    tryLlmRefinement(cleaned)
                 } else {
                     writeDiagnostic("whisperCallback.onResult: text is BLANK, skipping")
                 }
@@ -1020,6 +1022,8 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 val cleaned = space.manus.nacre.ai.LlmPostProcessor.quickClean(processed)
                 service.currentInputConnection?.commitText(cleaned, 1)
                 committedInSession.append(cleaned)
+                // Stage 2: LLM refinement in background
+                tryLlmRefinement(cleaned)
                 utteranceCount++
             } else {
                 writeDiagnostic("SpeechRecognizer.onResults: EMPTY text, skipping")
@@ -1097,6 +1101,39 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         val bm = service.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return true
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return level > BATTERY_THRESHOLD
+    }
+
+    /**
+     * Stage 2: Try LLM refinement in background. If the LLM returns a better result
+     * within the timeout, delete the quickClean text and replace it with the refined version.
+     */
+    private fun tryLlmRefinement(quickCleanText: String) {
+        Thread {
+            try {
+                if (!space.manus.nacre.ai.LlmPostProcessor.isAvailable()) {
+                    writeDiagnostic("tryLlmRefinement: llama-server not available, skipping")
+                    return@Thread
+                }
+                val start = System.currentTimeMillis()
+                val refined = space.manus.nacre.ai.LlmPostProcessor.refine(quickCleanText)
+                val elapsed = System.currentTimeMillis() - start
+                writeDiagnostic("tryLlmRefinement: ${elapsed}ms, refined='${refined.take(80)}'")
+
+                if (refined != quickCleanText && refined.isNotBlank()) {
+                    Handler(Looper.getMainLooper()).post {
+                        val ic = service.currentInputConnection ?: return@post
+                        // Delete the quickClean text and replace with LLM result
+                        ic.deleteSurroundingText(quickCleanText.length, 0)
+                        ic.commitText(refined, 1)
+                        writeDiagnostic("tryLlmRefinement: replaced quickClean with LLM result")
+                    }
+                } else {
+                    writeDiagnostic("tryLlmRefinement: no improvement, keeping quickClean")
+                }
+            } catch (e: Exception) {
+                writeDiagnostic("tryLlmRefinement: error ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }.start()
     }
 
     /**
