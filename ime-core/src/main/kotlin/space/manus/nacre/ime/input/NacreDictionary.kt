@@ -772,24 +772,54 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 results.add(ConversionCandidate(surface = surface, reading = reading, cost = 4500))
             }
         } else if (isLastVerb || isLastAdj) {
-            // After verb/adjective: auxiliaries and conjunctions
+            // After verb/adjective: auxiliaries, conjunctions, nominalizers
             val followers = listOf(
                 "こと" to "こと", "の" to "の", "ため" to "ため",
                 "ので" to "ので", "から" to "から", "けど" to "けど",
-                "が" to "が", "と" to "と", "ので" to "ので",
+                "が" to "が", "と" to "と", "し" to "し",
+                "です" to "です", "ます" to "ます",
+                "た" to "た", "ない" to "ない",
+                "ている" to "ている", "ていた" to "ていた",
+                "てから" to "てから", "ても" to "ても",
+                "ように" to "ように", "ようと" to "ようと",
+                "ほう" to "方", "とき" to "時",
+                "ところ" to "ところ", "ばかり" to "ばかり",
             )
             for ((reading, surface) in followers) {
                 results.add(ConversionCandidate(surface = surface, reading = reading, cost = 4800))
             }
         } else if (isLastParticle) {
-            // After particle: likely a content word follows — use recent nouns/verbs
+            // After particle: common verbs/adjectives as fallback
+            val commonVerbs = listOf(
+                "する" to "する", "なる" to "なる", "ある" to "ある",
+                "いる" to "いる", "できる" to "できる", "思う" to "思う",
+                "言う" to "言う", "見る" to "見る", "行く" to "行く",
+                "来る" to "来る", "使う" to "使う", "知る" to "知る",
+                "分かる" to "分かる", "考える" to "考える", "作る" to "作る",
+                "いい" to "いい", "ない" to "ない", "多い" to "多い",
+                "必要" to "必要", "大丈夫" to "大丈夫",
+            )
+            for ((reading, surface) in commonVerbs) {
+                results.add(ConversionCandidate(surface = surface, reading = reading, cost = 5000))
+            }
+            // Also use recent history for personalized predictions
             for (h in recentHistory) {
                 val entries = dict[h.reading]
                 val entry = entries?.firstOrNull { it.surface == h.surface }
                 if (entry != null && isContentWord(entry.leftGroup)) {
-                    results.add(h.copy(cost = 5200))
-                    if (results.size >= 5) break
+                    results.add(h.copy(cost = 4800))
+                    if (results.size >= 25) break
                 }
+            }
+        } else if (isAuxVerb(lastRightGroup)) {
+            // After auxiliary verb (ます/です/た/etc.): sentence connectors
+            val followers = listOf(
+                "が" to "が", "けど" to "けど", "ので" to "ので",
+                "から" to "から", "し" to "し", "ね" to "ね",
+                "よ" to "よ", "よね" to "よね",
+            )
+            for ((reading, surface) in followers) {
+                results.add(ConversionCandidate(surface = surface, reading = reading, cost = 4500))
             }
         }
 
@@ -915,14 +945,23 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         // Medium (4-7 chars): weight 2500 — balanced
         // Long (8+ chars): weight 3200 — LM context is crucial
         val totalChars = candidates.firstOrNull()?.reading?.length ?: 4
+        val hasContext = committedContext.isNotEmpty()
         val dynamicWeight = when {
-            totalChars <= 3 -> 1800f
+            // With committed context, even short inputs benefit from LM
+            totalChars <= 3 -> if (hasContext) 2200f else 1800f
             totalChars <= 7 -> 2500f
             else -> 3200f
         }
 
-        // Also increase weight when we have committed context (cross-sentence scoring)
-        val contextWeight = if (committedContext.isNotEmpty()) dynamicWeight * 1.15f else dynamicWeight
+        // Increase weight when we have committed context (cross-sentence scoring)
+        // More context words = higher confidence in LM
+        val contextMultiplier = when {
+            committedContext.size >= 3 -> 1.25f
+            committedContext.size >= 2 -> 1.20f
+            hasContext -> 1.15f
+            else -> 1.0f
+        }
+        val contextWeight = dynamicWeight * contextMultiplier
 
         for (i in 0 until maxScore) {
             if (i >= scores.size) break
@@ -1024,16 +1063,34 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             if (it >= 0) it else -(it + 1)
         }
 
+        // For short inputs, show more candidates per reading to increase diversity
+        val takePerReading = when {
+            kana.length <= 1 -> 5
+            kana.length <= 2 -> 4
+            else -> 3
+        }
+        // Prefer readings that are close in length to input (more likely what user wants)
+        val maxExtraChars = if (kana.length <= 2) 6 else 8
+
         while (idx < sortedReadings.size && sortedReadings[idx].startsWith(kana)) {
             val reading = sortedReadings[idx]
-            if (reading != kana) {
+            val extraChars = reading.length - kana.length
+            if (reading != kana && extraChars <= maxExtraChars) {
                 val entries = dict[reading]
                 if (entries == null) { idx++; continue }
-                for (entry in entries.take(3)) {
+                for (entry in entries.take(takePerReading)) {
                     var cost = applyBoost(reading, entry.surface, entry.cost)
                     cost = posContextCost(reading, entry.surface, cost)
-                    // Penalty for how much longer the reading is than input
-                    cost += (reading.length - kana.length) * 300
+                    // Graduated penalty: first few extra chars are cheap, gets expensive
+                    cost += when (extraChars) {
+                        1 -> 150
+                        2 -> 350
+                        3 -> 600
+                        4 -> 1000
+                        else -> extraChars * 300
+                    }
+                    // Bonus for content words (users usually want kanji, not particles)
+                    if (isContentWord(entry.leftGroup) && kana.length >= 2) cost -= 400
                     results.add(
                         ConversionCandidate(
                             surface = entry.surface,
@@ -1417,9 +1474,8 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         }
 
         // 2. Common misreading/mistyping patterns
-        // Only entries where key != value (self-mappings are skipped by the check below)
         val corrections = mapOf(
-            // 定番の誤読
+            // === 定番の誤読 ===
             "ふいんき" to "ふんいき",        // 雰囲気
             "たいく" to "たいいく",          // 体育
             "がいしゅつ" to "きしゅつ",       // 既出
@@ -1431,61 +1487,96 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
             "づつ" to "ずつ",              // ～ずつ
             "しゅみれーしょん" to "しみゅれーしょん", // シミュレーション
             "うるおぼえ" to "うろおぼえ",     // うろ覚え
-            "ていかく" to "てきかく",        // 的確（誤読）
-            "げいいん" to "げんいん",        // 原因（誤読）
-            "がいいん" to "げんいん",        // 原因（誤読）
-            // 音声認識でよく起きる誤認識
-            "わたしわ" to "わたしは",        // 助詞「は」
-            "きょうわ" to "きょうは",        // 今日は
+            "ていかく" to "てきかく",        // 的確
+            "げいいん" to "げんいん",        // 原因
+            "がいいん" to "げんいん",        // 原因
+            "えんえん" to "えんえん",        // 延々（「永遠」と混同されがち。自己マップだが辞書引きで候補出す）
+            "かんぺき" to "かんぺき",        // 完璧
+            "ひつぜん" to "ひつぜん",
+            "ぜったい" to "ぜったい",
+            // === 助詞「は」「へ」「を」の誤り ===
+            "わたしわ" to "わたしは",
+            "きょうわ" to "きょうは",
             "ぼくわ" to "ぼくは",
             "あなたわ" to "あなたは",
             "それわ" to "それは",
             "これわ" to "これは",
+            "あれわ" to "あれは",
+            "どれわ" to "どれは",
+            "だれわ" to "だれは",
             "なにわ" to "なには",
-            "どこえ" to "どこへ",            // 助詞「へ」
-            "いえ" to "いへ",
+            "どこえ" to "どこへ",
             "こっちえ" to "こっちへ",
             "そっちえ" to "そっちへ",
-            "～お" to "～を",               // 助詞「を」
-            // 長音の誤入力
+            "あっちえ" to "あっちへ",
+            "うちえ" to "うちへ",
+            "がっこうえ" to "がっこうへ",
+            "かいしゃえ" to "かいしゃへ",
+            // === 長音の誤入力 ===
             "とうり" to "とおり",            // 通り
             "おうきい" to "おおきい",        // 大きい
             "おうい" to "おおい",            // 多い
             "こうり" to "こおり",            // 氷
-            // カタカナ語の誤読
-            "てぃーしゃつ" to "てぃーしゃつ",
+            "とうい" to "とおい",            // 遠い
+            "おうきな" to "おおきな",        // 大きな
+            // === カタカナ語の誤読 ===
             "こみにけーしょん" to "こみゅにけーしょん", // コミュニケーション
             "あぼがど" to "あぼかど",        // アボカド
             "ばっく" to "ばっぐ",            // バッグ
             "べっと" to "べっど",            // ベッド
-            "でぃすくとっぷ" to "ですくとっぷ", // デスクトップ（逆方向も）
-            "ですくとっぷ" to "でぃすくとっぷ",
-            // IT用語の誤入力
-            "でぃふぉると" to "でふぉると",   // デフォルト
-            "でふぉると" to "でふぉると",
-            "あるごりずむ" to "あるごりずむ",
+            "でぃすくとっぷ" to "ですくとっぷ", // デスクトップ
+            "あたっち" to "あたっち",
+            "ぼらんてぃあ" to "ぼらんてぃあ",
+            "ぷれぜんてーしょん" to "ぷれぜんてーしょん",
+            // === IT用語 ===
             "ぱらめーた" to "ぱらめーたー",   // パラメーター
             "ぷろぱてぃ" to "ぷろぱてぃー",   // プロパティー
-            "めっせーじ" to "めっせーじ",
-            // 敬語の誤り
-            "おっしゃった" to "おっしゃった",
-            "いただきます" to "いただきます",
-            "さしすせそ" to "さしすせそ",
+            "でぃれくとり" to "でぃれくとりー", // ディレクトリー
+            "れぽじとり" to "りぽじとりー",   // リポジトリー
+            "ぶらうざ" to "ぶらうざー",      // ブラウザー
+            "さーば" to "さーばー",          // サーバー
+            "こんてな" to "こんてなー",      // コンテナー
+            "どっか" to "どっかー",          // Docker
+            "くばねてぃす" to "くーばねてぃす", // Kubernetes
+            "ぎっとはぶ" to "ぎっとはぶ",     // GitHub
+            // === 話し言葉の誤り ===
             "ゆわれた" to "いわれた",         // 言われた
             "ゆった" to "いった",            // 言った
             "ゆってた" to "いってた",         // 言ってた
+            "ゆってる" to "いってる",         // 言ってる
+            "ゆう" to "いう",               // 言う
             "ちがくて" to "ちがって",         // 違って
             "ちがかった" to "ちがった",        // 違った
             "やっぱし" to "やっぱり",         // やっぱり
             "やぱり" to "やっぱり",
-            // 濁点・半濁点の誤り
-            "せんたく" to "せんたく",         // 洗濯/選択
-            "きっぷ" to "きっぷ",
-            "しんぱい" to "しんぱい",
-            // 音便の誤入力
+            "すいません" to "すみません",
+            "あざす" to "ありがとうございます",
+            "あざっす" to "ありがとうございます",
+            "おなしゃす" to "おねがいします",
+            "わかんない" to "わからない",
+            "しんない" to "しらない",
+            "つーか" to "というか",
+            "てか" to "というか",
+            "じゃね" to "ではないか",
+            // === 音便の誤入力 ===
             "あったかい" to "あたたかい",     // 暖かい
-            "つめたい" to "つめたい",
-            "はやい" to "はやい",
+            "つったってる" to "つったってる",
+            "おもしれー" to "おもしろい",
+            "すげー" to "すごい",
+            "やべー" to "やばい",
+            "でけー" to "でかい",
+            "はえー" to "はやい",
+            "うめー" to "うまい",
+            "つえー" to "つよい",
+            "ねみー" to "ねむい",
+            // === 二重母音・促音の誤り ===
+            "おとうさん" to "おとうさん",
+            "おかあさん" to "おかあさん",
+            "にいさん" to "にいさん",
+            "ねえさん" to "ねえさん",
+            "ちっちゃい" to "ちいさい",       // 小さい
+            "おっきい" to "おおきい",        // 大きい
+            "ちっさい" to "ちいさい",
         )
         val corrected = corrections[kana]
         if (corrected != null && corrected != kana) {
@@ -1848,6 +1939,10 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         val loanwordSuffixes = listOf(
             "しょん", "にんぐ", "めんと", "ねす",
             "りてぃ", "ぶる", "とりー", "ありー",
+            "てぃぶ", "なる", "いず", "いずむ",
+            "ーしょん", "ーにんぐ", "ーめんと",
+            "ーじ", "ーる", "ーと", "ーす", "ーど", "ーぷ",
+            "ふぃっく", "ろじー", "ぐらふぃ",
         )
         for (suffix in loanwordSuffixes) {
             if (kana.endsWith(suffix) && kana.length >= suffix.length + 2) return true
