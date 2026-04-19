@@ -145,6 +145,23 @@ class ModelDownloader(private val context: Context) {
         )
     }
 
+    // ---- LLM (Qwen 2.5 1.5B Q4_K_M) ----
+
+    /**
+     * Download the Qwen 2.5 1.5B Instruct Q4_K_M GGUF model used for voice
+     * post-processing (dictation cleanup). ~940MB.
+     */
+    fun downloadLlm(onComplete: (Boolean) -> Unit) {
+        downloadModel(
+            url = LLM_URL,
+            modelName = "Qwen 2.5 1.5B Instruct (Q4_K_M)",
+            fileName = LLM_FILENAME,
+            onComplete = onComplete,
+        )
+    }
+
+    fun getLlmModelPath(): String? = findModelFile(LLM_FILENAME)
+
     /**
      * Get KenLM model file if it exists.
      */
@@ -388,5 +405,6 @@ class ModelDownloader(private val context: Context) {
         const val KENLM_FILENAME = "japanese-5gram.klm"
         const val LLM_FILENAME = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
         const val KENLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/japanese-5gram.klm"
+        const val LLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
     }
 }

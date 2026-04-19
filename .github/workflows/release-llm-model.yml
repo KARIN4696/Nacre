@@ -1,0 +1,56 @@
+name: Release LLM Model (Qwen 2.5 1.5B Q4_K_M)
+
+# Downloads the official Qwen 2.5 1.5B Instruct Q4_K_M GGUF from Hugging Face
+# and uploads it to the v0.1.0-models GitHub Release so the app can fetch it
+# via ModelDownloader.downloadLlm().
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: 'Hugging Face URL for the GGUF file'
+        required: false
+        default: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf'
+      release_tag:
+        description: 'GitHub release tag to upload to'
+        required: false
+        default: 'v0.1.0-models'
+      asset_name:
+        description: 'Asset filename (must match ModelDownloader.LLM_FILENAME)'
+        required: false
+        default: 'qwen2.5-1.5b-instruct-q4_k_m.gguf'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (for gh release upload)
+        uses: actions/checkout@v4
+
+      - name: Download GGUF from Hugging Face
+        run: |
+          URL="${{ github.event.inputs.source_url || 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf' }}"
+          OUT="${{ github.event.inputs.asset_name || 'qwen2.5-1.5b-instruct-q4_k_m.gguf' }}"
+          echo "Downloading ${URL} -> ${OUT}"
+          curl -L --progress-bar --fail --output "${OUT}" "${URL}"
+          ls -lh "${OUT}"
+          # Sanity check: GGUF files start with magic bytes "GGUF"
+          if [ "$(head -c 4 "${OUT}")" != "GGUF" ]; then
+            echo "::error::Downloaded file is not a GGUF (wrong magic bytes)."
+            exit 1
+          fi
+          echo "GGUF magic verified."
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.release_tag || 'v0.1.0-models' }}"
+          ASSET="${{ github.event.inputs.asset_name || 'qwen2.5-1.5b-instruct-q4_k_m.gguf' }}"
+          # Create the release if missing (idempotent)
+          gh release view "${TAG}" >/dev/null 2>&1 || \
+            gh release create "${TAG}" --title "AI Models ${TAG}" --notes "Auto-generated model release."
+          gh release upload "${TAG}" "${ASSET}" --clobber
+          echo "Uploaded ${ASSET} to release ${TAG}"
