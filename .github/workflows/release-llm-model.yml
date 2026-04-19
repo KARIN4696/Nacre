@@ -20,6 +20,9 @@ on:
         required: false
         default: 'qwen2.5-1.5b-instruct-q4_k_m.gguf'
 
+permissions:
+  contents: write  # needed for gh release create/upload
+
 jobs:
   release:
     runs-on: ubuntu-latest
