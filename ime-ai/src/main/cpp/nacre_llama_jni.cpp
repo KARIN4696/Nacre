@@ -10,7 +10,7 @@
 
 #ifdef LLAMA_AVAILABLE
 #include "llama.h"
-#include "common.h"
+#include <vector>
 #endif
 
 static std::mutex g_mutex;
@@ -143,9 +143,17 @@ Java_space_manus_nacre_ai_LlamaJni_generate(JNIEnv* env, jobject, jstring prompt
             break;
         }
 
-        auto* logits = llama_get_logits_ith(g_ctx, batch.n_tokens - 1);
-        llama_token new_token = llama_sample_token_greedy(g_ctx, logits,
-                                                           llama_n_vocab(g_model));
+        // Build candidates array from logits for greedy sampling.
+        // b3500 API: llama_sample_token_greedy(ctx, candidates_arr*) — no 3-arg form exists.
+        float* logits = llama_get_logits_ith(g_ctx, batch.n_tokens - 1);
+        const int n_vocab = llama_n_vocab(g_model);
+        std::vector<llama_token_data> candidates;
+        candidates.reserve(n_vocab);
+        for (llama_token tid = 0; tid < n_vocab; tid++) {
+            candidates.push_back(llama_token_data{tid, logits[tid], 0.0f});
+        }
+        llama_token_data_array candidates_arr = { candidates.data(), candidates.size(), false };
+        llama_token new_token = llama_sample_token_greedy(g_ctx, &candidates_arr);
 
         if (llama_token_is_eog(g_model, new_token)) break;
 

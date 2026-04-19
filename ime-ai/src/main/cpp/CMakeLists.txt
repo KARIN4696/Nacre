@@ -10,7 +10,10 @@ set(CMAKE_C_STANDARD 11)
 # Place llama.cpp source in ime-ai/src/main/cpp/llama/
 set(LLAMA_DIR ${CMAKE_SOURCE_DIR}/llama)
 if(EXISTS ${LLAMA_DIR}/llama.cpp)
-    add_library(llama STATIC
+    # Core llama.cpp + ggml only. nacre_llama_jni.cpp does not depend on
+    # common/ (which would pull nlohmann json, a build_info generator, etc.).
+    # If unicode*.cpp were copied by the CI flatten step, include them.
+    set(LLAMA_CORE_SRCS
         ${LLAMA_DIR}/llama.cpp
         ${LLAMA_DIR}/llama-grammar.cpp
         ${LLAMA_DIR}/llama-sampling.cpp
@@ -19,13 +22,15 @@ if(EXISTS ${LLAMA_DIR}/llama.cpp)
         ${LLAMA_DIR}/ggml-alloc.c
         ${LLAMA_DIR}/ggml-backend.c
         ${LLAMA_DIR}/ggml-quants.c
-        ${LLAMA_DIR}/common/common.cpp
-        ${LLAMA_DIR}/common/sampling.cpp
     )
-    target_include_directories(llama PUBLIC
-        ${LLAMA_DIR}
-        ${LLAMA_DIR}/common
-    )
+    if(EXISTS ${LLAMA_DIR}/unicode.cpp)
+        list(APPEND LLAMA_CORE_SRCS ${LLAMA_DIR}/unicode.cpp)
+    endif()
+    if(EXISTS ${LLAMA_DIR}/unicode-data.cpp)
+        list(APPEND LLAMA_CORE_SRCS ${LLAMA_DIR}/unicode-data.cpp)
+    endif()
+    add_library(llama STATIC ${LLAMA_CORE_SRCS})
+    target_include_directories(llama PUBLIC ${LLAMA_DIR})
     target_compile_definitions(llama PRIVATE
         GGML_USE_CPU
         NDEBUG

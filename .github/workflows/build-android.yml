@@ -48,13 +48,15 @@ jobs:
           [ -d /tmp/llama-src/src ] && echo "src/:" && ls /tmp/llama-src/src
           [ -d /tmp/llama-src/ggml ] && echo "ggml/:" && ls /tmp/llama-src/ggml
 
-          mkdir -p ime-ai/src/main/cpp/llama/common
           DEST=ime-ai/src/main/cpp/llama
+          mkdir -p "$DEST"
 
-          # Flatten llama.cpp core sources (src/ or root) into DEST
+          # Flatten llama.cpp core sources (src/ or root) into DEST.
+          # Skip common/ — nacre_llama_jni.cpp only uses core llama APIs
+          # (llama.h), never the helpers in common/.
           for name in llama.cpp llama-grammar.cpp llama-sampling.cpp llama-vocab.cpp \
                       unicode.cpp unicode-data.cpp; do
-            f=$(find /tmp/llama-src -maxdepth 3 -name "$name" -type f | head -n1)
+            f=$(find /tmp/llama-src -maxdepth 3 -name "$name" -type f -not -path "*/examples/*" -not -path "*/tests/*" | head -n1)
             if [ -n "$f" ]; then cp "$f" "$DEST/"; else echo "::warning::$name not found"; fi
           done
 
@@ -71,17 +73,8 @@ jobs:
           find /tmp/llama-src/ggml/src -maxdepth 2 -name "*.h" -exec cp {} "$DEST/" \; 2>/dev/null || true
           find /tmp/llama-src -maxdepth 1 -name "*.h" -exec cp {} "$DEST/" \; 2>/dev/null || true
 
-          # common/
-          for name in common.cpp sampling.cpp; do
-            f=$(find /tmp/llama-src -maxdepth 3 -path "*/common/$name" -type f | head -n1)
-            if [ -n "$f" ]; then cp "$f" "$DEST/common/"; else echo "::warning::common/$name not found"; fi
-          done
-          find /tmp/llama-src -maxdepth 3 -path "*/common/*.h" -type f -exec cp {} "$DEST/common/" \; 2>/dev/null || true
-
           echo "--- llama/ contents ---"
           ls "$DEST/"
-          echo "--- llama/common/ contents ---"
-          ls "$DEST/common/"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
