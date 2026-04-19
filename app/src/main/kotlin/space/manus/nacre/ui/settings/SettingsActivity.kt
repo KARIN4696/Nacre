@@ -165,7 +165,10 @@ fun NacreSettingsScreen() {
         SectionHeader("AI Models")
         StoragePermissionCard()
         Spacer(modifier = Modifier.height(8.dp))
+        FirstRunModelsBanner()
         KenLmModelSection()
+        Spacer(modifier = Modifier.height(8.dp))
+        LlmModelSection()
         Spacer(modifier = Modifier.height(8.dp))
         WhisperModelSection()
 
@@ -727,13 +730,170 @@ private fun StoragePermissionCard() {
     }
 }
 
+/**
+ * Shown above the AI model cards on first launch (or whenever none of the
+ * three AI models are present) as a quick explanation of the downloads
+ * about to be offered below. Hidden once any AI model has landed.
+ */
+@Composable
+private fun FirstRunModelsBanner() {
+    val context = LocalContext.current
+    val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
+    val anyPresent = downloader.getKenLmModelPath() != null ||
+        downloader.getCompactKenLmModelPath() != null ||
+        downloader.getLlmModelPath() != null ||
+        downloader.getSenseVoiceModelDir() != null
+    if (anyPresent) return
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2A3E)),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "AI機能を有効化",
+                color = NacreAccent,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "以下のカードから必要なモデルをダウンロードしてください。" +
+                    "オフラインで動作し、会話内容は端末外に送信されません。",
+                color = NacreTextDim,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+/**
+ * Qwen 2.5 1.5B Instruct (Q4_K_M) — ~1.1GB. Powers voice-input cleanup.
+ */
+@Composable
+private fun LlmModelSection() {
+    val context = LocalContext.current
+    val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
+    var modelPath by remember { mutableStateOf(downloader.getLlmModelPath()) }
+    var modelSize by remember {
+        mutableStateOf(modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L)
+    }
+    var downloading by remember { mutableStateOf(false) }
+    var progressPct by remember { mutableStateOf(0) }
+    var progressBytes by remember { mutableStateOf(0L to 0L) }
+
+    // Re-check when resuming
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && modelPath == null) {
+                val found = downloader.getLlmModelPath()
+                if (found != null) {
+                    modelPath = found
+                    modelSize = java.io.File(found).length() / 1024 / 1024
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = NacreSurface),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Qwen 2.5 1.5B", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Spacer(modifier = Modifier.width(8.dp))
+                if (modelPath != null) {
+                    Text("Ready", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Text("Not found", color = Color(0xFFFF6666), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            if (modelPath != null) {
+                Text("Voice input cleanup (${modelSize}MB)", color = NacreTextDim, fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(modelPath!!, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
+            } else {
+                Text(
+                    "音声入力のLLM整文用（~1.1GB）。ダウンロード後、キーボード再起動で有効化。",
+                    color = NacreTextDim,
+                    fontSize = 12.sp,
+                )
+            }
+            if (downloading) {
+                Spacer(modifier = Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { progressPct / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = NacreAccent,
+                    trackColor = NacreTextDim.copy(alpha = 0.3f),
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "${progressPct}% (${progressBytes.first / 1024 / 1024}/${progressBytes.second / 1024 / 1024}MB)",
+                    color = NacreTextDim, fontSize = 11.sp,
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    downloading = true
+                    progressPct = 0
+                    downloader.onProgress = { p ->
+                        progressPct = p.percent
+                        progressBytes = p.bytesDownloaded to p.totalBytes
+                    }
+                    downloader.downloadLlm { ok ->
+                        downloading = false
+                        downloader.onProgress = null
+                        if (ok) {
+                            val found = downloader.getLlmModelPath()
+                            if (found != null) {
+                                modelPath = found
+                                modelSize = java.io.File(found).length() / 1024 / 1024
+                                Toast.makeText(context, "Qwen model downloaded (${modelSize}MB). Restart keyboard.", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Download failed.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                enabled = !downloading,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NacreAccent,
+                    contentColor = Color.Black,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (downloading) "Downloading..."
+                    else if (modelPath != null) "Re-download"
+                    else "Download (~1.1GB)"
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun KenLmModelSection() {
     val context = LocalContext.current
     val downloader = remember { space.manus.nacre.ai.ModelDownloader(context) }
     var modelPath by remember { mutableStateOf(downloader.getKenLmModelPath()) }
     var modelSize by remember { mutableStateOf(modelPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L) }
+    var compactPath by remember { mutableStateOf(downloader.getCompactKenLmModelPath()) }
+    var compactSize by remember { mutableStateOf(compactPath?.let { java.io.File(it).length() / 1024 / 1024 } ?: 0L) }
     var importing by remember { mutableStateOf(false) }
+    var downloadingCompact by remember { mutableStateOf(false) }
+    var progressPct by remember { mutableStateOf(0) }
 
     // Re-check model when returning from permission settings
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -790,31 +950,99 @@ private fun KenLmModelSection() {
         colors = CardDefaults.cardColors(containerColor = NacreSurface),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // --- Compact 3-gram (recommended default) ---
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("KenLM 5-gram", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("KenLM 3-gram (compact)", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Spacer(modifier = Modifier.width(8.dp))
-                if (modelPath != null) {
+                if (compactPath != null) {
                     Text("Ready", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 } else {
                     Text("Not found", color = Color(0xFFFF6666), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))
-            if (modelPath != null) {
-                Text("Japanese text conversion (${modelSize}MB)", color = NacreTextDim, fontSize = 12.sp)
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(modelPath!!, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
+            if (compactPath != null) {
+                Text("日本語変換（推奨モデル, ${compactSize}MB）", color = NacreTextDim, fontSize = 12.sp)
             } else {
-                Text("Place japanese-5gram.klm in /sdcard/Download/ and grant file access above", color = NacreTextDim, fontSize = 12.sp)
+                Text("日本語変換の推奨モデル（~161MB、ほとんどのユーザーはこれで十分）", color = NacreTextDim, fontSize = 12.sp)
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            if (downloadingCompact) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { progressPct / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = NacreAccent,
+                    trackColor = NacreTextDim.copy(alpha = 0.3f),
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text("${progressPct}%", color = NacreTextDim, fontSize = 11.sp)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
             Button(
-                onClick = { launcher.launch(arrayOf("*/*")) },
-                enabled = !importing,
+                onClick = {
+                    downloadingCompact = true
+                    progressPct = 0
+                    downloader.onProgress = { p -> progressPct = p.percent }
+                    downloader.downloadCompactKenLm { ok ->
+                        downloadingCompact = false
+                        downloader.onProgress = null
+                        if (ok) {
+                            val found = downloader.getCompactKenLmModelPath()
+                            if (found != null) {
+                                compactPath = found
+                                compactSize = java.io.File(found).length() / 1024 / 1024
+                                Toast.makeText(context, "Compact KenLM downloaded (${compactSize}MB). Restart keyboard.", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Download failed.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                enabled = !downloadingCompact,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = NacreAccent,
                     contentColor = Color.Black,
                 ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (downloadingCompact) "Downloading..."
+                    else if (compactPath != null) "Re-download"
+                    else "Download (~161MB)"
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            androidx.compose.material3.HorizontalDivider(color = NacreTextDim.copy(alpha = 0.2f))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // --- Full 5-gram (power users, sideload via file picker) ---
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("KenLM 5-gram (full)", color = NacreText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Spacer(modifier = Modifier.width(8.dp))
+                if (modelPath != null) {
+                    Text("Ready", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Text("Optional", color = NacreTextDim, fontSize = 12.sp)
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            if (modelPath != null) {
+                Text("上級向け高精度モデル（${modelSize}MB, compact より優先読込）", color = NacreTextDim, fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(modelPath!!, color = NacreTextDim.copy(alpha = 0.5f), fontSize = 10.sp, maxLines = 1)
+            } else {
+                Text("/sdcard/Download/ に japanese-5gram.klm を置くか、下のボタンから選択（~561MB）", color = NacreTextDim, fontSize = 12.sp)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = { launcher.launch(arrayOf("*/*")) },
+                enabled = !importing,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NacreSurface,
+                    contentColor = NacreAccent,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, NacreAccent),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
