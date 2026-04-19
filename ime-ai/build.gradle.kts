@@ -42,7 +42,7 @@ android {
 }
 
 dependencies {
-    implementation(files("libs/sherpa-onnx-1.12.34.aar"))
+    implementation(project(":sherpa-onnx"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("junit:junit:4.13.2")
 }
