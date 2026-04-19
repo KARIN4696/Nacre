@@ -1,22 +1,31 @@
 package space.manus.nacre.ai
 
-import android.util.Log
-import java.net.HttpURLConnection
-import java.net.URL
-
 /**
  * Post-processes raw voice transcription.
  *
  * Two-stage processing:
  * 1. quickClean() — instant rule-based cleanup (spaces, punctuation, fillers)
- * 2. refine() — LLM-based refinement (misrecognition fix, rephrasing) via llama-server
+ * 2. LLM refinement — handled by VoiceInputManager via in-process LlmService (AIDL).
+ *    Callers pass [DICTATION_CLEANUP_INSTRUCTION] as the instruction argument.
  */
 object LlmPostProcessor {
-    private const val TAG = "LlmPostProcessor"
-    private const val SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
-    private const val TIMEOUT_MS = 8_000
-    private const val SYSTEM_PROMPT = "音声テキスト整形AI。整形後テキストのみ出力。" +
-        "規則:スペース除去/句読点適切配置/フィラー除去/言い直し→後の方採用/誤変換修正/繰り返し除去/自然な書き言葉化/疑問文は？"
+
+    /**
+     * System prompt for voice-to-text cleanup. Passed as the `instruction` to
+     * ILlmService.transform() — LlmService wraps it in the Qwen ChatML system turn.
+     */
+    const val DICTATION_CLEANUP_INSTRUCTION =
+        "あなたは日本語の音声認識結果を自然な書き言葉に整える編集者です。\n" +
+        "以下の規則に従って入力を整形してください:\n" +
+        "- フィラー（えーっと、あのー、まあ、そのー、など）を削除\n" +
+        "- 言い直しがあれば後の発話を採用\n" +
+        "- 助詞の欠落や誤りを文脈から修正\n" +
+        "- 同音異義語の誤認識を文脈から正しい語に修正\n" +
+        "- 不要な繰り返しを整理\n" +
+        "- 句読点（、。）を適切に挿入\n" +
+        "- 疑問文は文末を「？」にする\n" +
+        "- 意味や話者の意図は一切変更しない\n" +
+        "出力は整形後のテキストのみ。前置き・説明・引用符は不要。"
 
     // Fillers sorted longest-first to avoid partial matches
     // Note: single-char "ん" removed — too aggressive, breaks "なん", "んです" etc.
@@ -161,71 +170,6 @@ object LlmPostProcessor {
         return text
     }
 
-    /**
-     * Stage 2: LLM-based refinement via local llama-server.
-     * Returns refined text, or original text if LLM is unavailable.
-     */
-    fun refine(rawText: String): String {
-        if (rawText.isBlank()) return rawText
-        writeDiag("refine() called: '${rawText.take(80)}'")
-        try {
-            val requestBody = """
-                {"messages":[
-                    {"role":"system","content":"$SYSTEM_PROMPT"},
-                    {"role":"user","content":${jsonEscape(rawText)}}
-                ],"temperature":0.1,"max_tokens":${rawText.length * 2}}
-            """.trimIndent()
-
-            writeDiag("Connecting to $SERVER_URL ...")
-            val conn = (URL(SERVER_URL).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json")
-                connectTimeout = 2000
-                readTimeout = TIMEOUT_MS
-                doOutput = true
-            }
-            conn.outputStream.use { it.write(requestBody.toByteArray()) }
-
-            val code = conn.responseCode
-            writeDiag("HTTP response: $code")
-            if (code != 200) {
-                return rawText
-            }
-
-            val response = conn.inputStream.bufferedReader().readText()
-            writeDiag("Response: ${response.take(200)}")
-            val contentStart = response.indexOf("\"content\":\"") + 11
-            val contentEnd = response.indexOf("\"", contentStart + 1)
-            if (contentStart > 10 && contentEnd > contentStart) {
-                val refined = response.substring(contentStart, contentEnd)
-                    .replace("\\n", "\n")
-                    .replace("\\\"", "\"")
-                    .replace("\\\\", "\\")
-                writeDiag("Refined: '${rawText.take(60)}' → '${refined.take(60)}'")
-                return refined.ifBlank { rawText }
-            }
-            writeDiag("Failed to parse content from response")
-        } catch (e: java.net.ConnectException) {
-            writeDiag("ConnectException: ${e.message}")
-        } catch (e: java.net.SocketTimeoutException) {
-            writeDiag("SocketTimeoutException: ${e.message}")
-        } catch (e: Exception) {
-            writeDiag("Exception: ${e.javaClass.simpleName}: ${e.message}")
-        }
-        return rawText
-    }
-
-    fun isAvailable(): Boolean {
-        return try {
-            val conn = URL("http://127.0.0.1:8080/health").openConnection() as HttpURLConnection
-            conn.connectTimeout = 1000
-            conn.readTimeout = 1000
-            val ok = conn.responseCode == 200
-            conn.disconnect()
-            ok
-        } catch (_: Exception) { false }
-    }
-
     private fun writeDiag(message: String) {
         try {
             val file = java.io.File(
@@ -237,21 +181,5 @@ object LlmPostProcessor {
             val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
             file.appendText("[$ts] $message\n")
         } catch (_: Exception) {}
-    }
-
-    private fun jsonEscape(s: String): String {
-        val sb = StringBuilder("\"")
-        for (c in s) {
-            when (c) {
-                '"' -> sb.append("\\\"")
-                '\\' -> sb.append("\\\\")
-                '\n' -> sb.append("\\n")
-                '\r' -> sb.append("\\r")
-                '\t' -> sb.append("\\t")
-                else -> sb.append(c)
-            }
-        }
-        sb.append("\"")
-        return sb.toString()
     }
 }

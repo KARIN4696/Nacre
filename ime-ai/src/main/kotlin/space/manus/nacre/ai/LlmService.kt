@@ -13,7 +13,7 @@ import kotlinx.coroutines.*
  * LLM text transformation service.
  *
  * Runs in a separate process (android:process=":llm") for JNI crash isolation.
- * Uses llama.cpp via JNI for local Gemma 3 1B inference.
+ * Uses llama.cpp via JNI for local Qwen 2.5 1.5B inference (ChatML prompt format).
  *
  * Falls back to rule-based transformation if native library/model is unavailable.
  *
@@ -144,16 +144,12 @@ class LlmService : Service() {
     }
 
     private fun buildPrompt(text: String, instruction: String): String {
-        return """<start_of_turn>user
-Transform the following text according to the instruction.
-
-Instruction: $instruction
-Text: $text
-
-Output only the transformed text, nothing else.
-<end_of_turn>
-<start_of_turn>model
-"""
+        // Qwen 2.5 ChatML format. The `instruction` becomes the system prompt so
+        // callers with detailed multi-line instructions (e.g. dictation cleanup)
+        // get proper conditioning; the raw input goes in the user turn.
+        return "<|im_start|>system\n$instruction<|im_end|>\n" +
+            "<|im_start|>user\n$text<|im_end|>\n" +
+            "<|im_start|>assistant\n"
     }
 
     // --- Rule-based fallback (works without model) ---

@@ -17,9 +17,15 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import space.manus.nacre.ai.ILlmCallback
+import space.manus.nacre.ai.ILlmService
 import space.manus.nacre.ai.IWhisperService
 import space.manus.nacre.ai.IWhisperCallback
+import space.manus.nacre.ai.LlmPostProcessor
 import space.manus.nacre.ime.NacreInputMethodService
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Typeless-level voice input manager.
@@ -66,6 +72,10 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     @Volatile private var whisperBound = false
     @Volatile private var isWhisperContinuousMode = false
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
+
+    // LLM post-processing (Qwen 2.5 1.5B via in-process LlmService over AIDL)
+    @Volatile private var llmService: ILlmService? = null
+    @Volatile private var llmBound = false
 
     private val whisperConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
@@ -124,6 +134,48 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                     }
                 }
             }
+        }
+    }
+
+    private val llmConnection = object : android.content.ServiceConnection {
+        override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {
+            val svc = ILlmService.Stub.asInterface(binder)
+            llmBound = true
+            writeDiagnostic("llmConnection.onServiceConnected")
+            Thread {
+                try {
+                    if (!svc.isModelLoaded) {
+                        val downloader = space.manus.nacre.ai.ModelDownloader(service)
+                        val modelFile = java.io.File(downloader.getModelsDir(), space.manus.nacre.ai.ModelDownloader.LLM_FILENAME)
+                        if (modelFile.exists() && modelFile.length() > 0) {
+                            writeDiagnostic("llmConnection: loading model ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024}MB)")
+                            svc.loadModel(modelFile.absolutePath)
+                            // Wait up to 30s for model load (Qwen 1.5B Q4_K_M takes ~3-8s)
+                            for (i in 0 until 60) {
+                                Thread.sleep(500)
+                                if (svc.isModelLoaded) break
+                            }
+                            if (!svc.isModelLoaded) {
+                                writeDiagnostic("llmConnection: model load TIMEOUT after 30s")
+                            } else {
+                                writeDiagnostic("llmConnection: model loaded successfully")
+                            }
+                        } else {
+                            writeDiagnostic("llmConnection: LLM model not present at ${modelFile.absolutePath} — refinement disabled")
+                        }
+                    }
+                    if (svc.isModelLoaded) {
+                        llmService = svc
+                    }
+                } catch (e: Exception) {
+                    writeDiagnostic("llmConnection EXCEPTION: ${e.message}")
+                }
+            }.start()
+        }
+        override fun onServiceDisconnected(name: android.content.ComponentName?) {
+            Log.w(TAG, "LlmService disconnected")
+            llmService = null
+            llmBound = false
         }
     }
 
@@ -1097,6 +1149,29 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         }
     }
 
+    fun bindLlmService() {
+        if (llmBound) return
+        try {
+            val intent = android.content.Intent().apply {
+                setClassName(service.packageName, "space.manus.nacre.ai.LlmService")
+            }
+            val bound = service.bindService(intent, llmConnection, android.content.Context.BIND_AUTO_CREATE)
+            llmBound = bound
+            writeDiagnostic("bindLlmService: bound=$bound")
+        } catch (e: Exception) {
+            Log.e(TAG, "bindLlmService failed", e)
+            writeDiagnostic("bindLlmService FAILED: ${e.message}")
+        }
+    }
+
+    fun unbindLlmService() {
+        if (llmBound) {
+            service.unbindService(llmConnection)
+            llmBound = false
+            llmService = null
+        }
+    }
+
     private fun isBatteryOk(): Boolean {
         val bm = service.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return true
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -1104,36 +1179,71 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     }
 
     /**
-     * Stage 2: Try LLM refinement in background. If the LLM returns a better result
-     * within the timeout, delete the quickClean text and replace it with the refined version.
+     * Stage 2: Try LLM refinement in background via in-process LlmService (AIDL).
+     * If the LLM returns a better result within the timeout, delete the quickClean
+     * text and replace it with the refined version.
      */
     private fun tryLlmRefinement(quickCleanText: String) {
         Thread {
             try {
-                if (!space.manus.nacre.ai.LlmPostProcessor.isAvailable()) {
-                    writeDiagnostic("tryLlmRefinement: llama-server not available, skipping")
+                val svc = llmService
+                if (svc == null || !svc.isModelLoaded) {
+                    writeDiagnostic("tryLlmRefinement: LLM model not loaded, skipping")
+                    return@Thread
+                }
+                if (svc.isGenerating) {
+                    writeDiagnostic("tryLlmRefinement: LLM busy, skipping")
                     return@Thread
                 }
                 val start = System.currentTimeMillis()
-                val refined = space.manus.nacre.ai.LlmPostProcessor.refine(quickCleanText)
+                val refined = refineViaAidl(svc, quickCleanText, LLM_REFINE_TIMEOUT_MS)
                 val elapsed = System.currentTimeMillis() - start
-                writeDiagnostic("tryLlmRefinement: ${elapsed}ms, refined='${refined.take(80)}'")
+                writeDiagnostic("tryLlmRefinement: ${elapsed}ms, refined='${refined?.take(80)}'")
 
-                if (refined != quickCleanText && refined.isNotBlank()) {
+                if (refined != null && refined != quickCleanText && refined.isNotBlank()) {
                     Handler(Looper.getMainLooper()).post {
                         val ic = service.currentInputConnection ?: return@post
-                        // Delete the quickClean text and replace with LLM result
                         ic.deleteSurroundingText(quickCleanText.length, 0)
                         ic.commitText(refined, 1)
                         writeDiagnostic("tryLlmRefinement: replaced quickClean with LLM result")
                     }
                 } else {
-                    writeDiagnostic("tryLlmRefinement: no improvement, keeping quickClean")
+                    writeDiagnostic("tryLlmRefinement: no improvement or timeout, keeping quickClean")
                 }
             } catch (e: Exception) {
                 writeDiagnostic("tryLlmRefinement: error ${e.javaClass.simpleName}: ${e.message}")
             }
         }.start()
+    }
+
+    /**
+     * Blocking wrapper around ILlmService.transform() for the dictation-cleanup
+     * instruction. Returns the refined string, or null on timeout/error.
+     */
+    private fun refineViaAidl(svc: ILlmService, rawText: String, timeoutMs: Long): String? {
+        val latch = CountDownLatch(1)
+        val result = AtomicReference<String?>(null)
+        svc.transform(
+            rawText,
+            LlmPostProcessor.DICTATION_CLEANUP_INSTRUCTION,
+            object : ILlmCallback.Stub() {
+                override fun onResult(text: String) {
+                    result.set(text.trim())
+                    latch.countDown()
+                }
+                override fun onPartialResult(text: String) { /* streaming not used here */ }
+                override fun onError(message: String) {
+                    writeDiagnostic("refineViaAidl.onError: $message")
+                    latch.countDown()
+                }
+            },
+        )
+        val finished = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        if (!finished) {
+            try { svc.cancelGeneration() } catch (_: Exception) {}
+            return null
+        }
+        return result.get()
     }
 
     /**
@@ -1158,6 +1268,9 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         private const val TAG = "VoiceInput"
         private const val BATTERY_THRESHOLD = 10
         private const val MAX_CONSECUTIVE_ERRORS = 15
+        // LLM refinement timeout. Qwen 2.5 1.5B Q4_K_M on modern Android typically
+        // finishes a ~100-char dictation in 1-3s; allow headroom before giving up.
+        private const val LLM_REFINE_TIMEOUT_MS = 8_000L
         // No deferred commit timer — Typeless model: commit only on user stop action
         private val RECOVERABLE_ERRORS = setOf(
             SpeechRecognizer.ERROR_NO_MATCH,

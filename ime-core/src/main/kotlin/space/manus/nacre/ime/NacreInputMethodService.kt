@@ -111,6 +111,7 @@ class NacreInputMethodService :
         physicalKeyboardDetector = PhysicalKeyboardDetector(this)
         voiceInputManager = VoiceInputManager(this)
         voiceInputManager.bindWhisperService()
+        voiceInputManager.bindLlmService()
         keyLighting = KeyLighting(this)
 
         clipboardManager.startListening()
@@ -340,6 +341,7 @@ class NacreInputMethodService :
         autoConvertEngine.saveRules(this)
         feedbackManager.release()
         voiceInputManager.unbindWhisperService()
+        voiceInputManager.unbindLlmService()
         voiceInputManager.release()
         if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
