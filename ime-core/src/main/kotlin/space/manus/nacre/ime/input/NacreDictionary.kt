@@ -510,11 +510,15 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         addUnique(viterbiConvert(kana).take(8))
 
         // 2.5 Kana variant conversion (を→お/うぉ, ぢ→じ etc.)
-        val kanaVariants = generateKanaVariants(kana)
-        for (variant in kanaVariants) {
-            val variantResults = exactMatch(variant) + viterbiConvert(variant).take(3)
-            for (c in variantResults) {
-                if (seen.add(c.surface)) results.add(c.copy(cost = c.cost + 500))
+        // Only trigger if the input actually contains a variant source char —
+        // otherwise we waste work and risk surfacing unrelated variant hits.
+        if (kana.any { it == 'を' || it == 'ぢ' || it == 'づ' || it == 'ヂ' || it == 'ヅ' || it == 'ヲ' }) {
+            val kanaVariants = generateKanaVariants(kana)
+            for (variant in kanaVariants) {
+                val variantResults = exactMatch(variant) + viterbiConvert(variant).take(3)
+                for (c in variantResults) {
+                    if (seen.add(c.surface)) results.add(c.copy(cost = c.cost + 500))
+                }
             }
         }
 
@@ -544,13 +548,15 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                             if (results.size >= 25) break
                         }
                         // Also add hiragana-tail variant: e.g. "スクショ" + "した"
+                        // High penalty — this is a fallback when the tail has no good
+                        // conversion, not a primary candidate.
                         if (tail.length <= 3 && h.surface != head) {
                             val hiraganaCombo = h.surface + tail
                             if (seen.add(hiraganaCombo)) {
                                 results.add(ConversionCandidate(
                                     surface = hiraganaCombo,
                                     reading = kana,
-                                    cost = h.cost + 4000,
+                                    cost = h.cost + 7000,
                                 ))
                             }
                         }
@@ -572,8 +578,14 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
         }
 
         // 7. Typo correction: swap adjacent kana, common misreadings
-        if (results.size < 15 && kana.length >= 3) {
-            addUnique(typoCorrection(kana, limit = 5))
+        //
+        // Only runs as a last resort — if Viterbi + exact match + prefix match
+        // together yielded almost nothing, the user likely DID mistype, so
+        // offering adjacent-swap candidates helps. Otherwise the transposition
+        // variants (e.g. "こんにはち" for input "こんにちは") surface as
+        // confusing "last-2-chars-swapped" candidates and degrade trust.
+        if (results.size < 4 && kana.length >= 3) {
+            addUnique(typoCorrection(kana, limit = 3))
         }
 
         // 8. Always ensure katakana, half-width katakana, and hiragana as-is candidates exist
@@ -1457,7 +1469,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                         results.add(ConversionCandidate(
                             surface = entry.surface,
                             reading = swapped,
-                            cost = entry.cost + 2000, // Penalty for typo
+                            cost = entry.cost + 6000, // Penalty for typo — keep these below real candidates
                         ))
                         if (results.size >= limit) return results.sortedBy { it.cost }
                     }
@@ -1466,7 +1478,7 @@ class NacreDictionary(private val context: Context) : DictionaryProvider {
                 val viterbi = viterbiConvert(swapped)
                 for (v in viterbi.take(1)) {
                     if (seen.add(v.surface)) {
-                        results.add(v.copy(cost = v.cost + 2000))
+                        results.add(v.copy(cost = v.cost + 6000))
                         if (results.size >= limit) return results.sortedBy { it.cost }
                     }
                 }
