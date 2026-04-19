@@ -37,38 +37,51 @@ jobs:
 
       - name: Clone llama.cpp source for native build
         run: |
-          # Pin to b3500 (mid-July 2024). Matches the flat source layout and
-          # pre-sampler-chain API that nacre_llama_jni.cpp targets
-          # (llama_load_model_from_file / llama_batch_add / llama_sample_token_greedy).
+          # Pin to b3500 (mid-July 2024) — matches the pre-sampler-chain API in
+          # nacre_llama_jni.cpp (llama_load_model_from_file / llama_batch_add /
+          # llama_sample_token_greedy). At this tag sources live under src/,
+          # ggml/ and include/; CMakeLists expects a flat llama/ dir, so we
+          # find-and-flatten below.
           git clone --depth 1 --branch b3500 https://github.com/ggerganov/llama.cpp.git /tmp/llama-src
+          echo "--- source tree ---"
+          ls /tmp/llama-src
+          [ -d /tmp/llama-src/src ] && echo "src/:" && ls /tmp/llama-src/src
+          [ -d /tmp/llama-src/ggml ] && echo "ggml/:" && ls /tmp/llama-src/ggml
+
           mkdir -p ime-ai/src/main/cpp/llama/common
-          # Copy the source files the CMakeLists expects. Older llama.cpp keeps
-          # all core .cpp/.c/.h at the repo root with common/ as a subdir.
-          cp /tmp/llama-src/llama.cpp ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/llama-grammar.cpp ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/llama-sampling.cpp ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/llama-vocab.cpp ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/llama.h ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/llama-impl.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/llama-grammar.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/llama-sampling.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/llama-vocab.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/unicode.cpp ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/unicode.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/unicode-data.cpp ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/unicode-data.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/ggml.c ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/ggml-alloc.c ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/ggml-backend.c ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/ggml-quants.c ime-ai/src/main/cpp/llama/
-          cp /tmp/llama-src/ggml*.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
-          cp /tmp/llama-src/common/common.cpp ime-ai/src/main/cpp/llama/common/
-          cp /tmp/llama-src/common/sampling.cpp ime-ai/src/main/cpp/llama/common/
-          cp /tmp/llama-src/common/*.h ime-ai/src/main/cpp/llama/common/ 2>/dev/null || true
+          DEST=ime-ai/src/main/cpp/llama
+
+          # Flatten llama.cpp core sources (src/ or root) into DEST
+          for name in llama.cpp llama-grammar.cpp llama-sampling.cpp llama-vocab.cpp \
+                      unicode.cpp unicode-data.cpp; do
+            f=$(find /tmp/llama-src -maxdepth 3 -name "$name" -type f | head -n1)
+            if [ -n "$f" ]; then cp "$f" "$DEST/"; else echo "::warning::$name not found"; fi
+          done
+
+          # ggml sources (src/ or ggml/src or root)
+          for name in ggml.c ggml-alloc.c ggml-backend.c ggml-quants.c; do
+            f=$(find /tmp/llama-src -maxdepth 4 -name "$name" -type f | head -n1)
+            if [ -n "$f" ]; then cp "$f" "$DEST/"; else echo "::warning::$name not found"; fi
+          done
+
+          # Headers — public ones live in include/ at b3500
+          find /tmp/llama-src/include -maxdepth 2 -name "*.h" -exec cp {} "$DEST/" \; 2>/dev/null || true
+          find /tmp/llama-src/src -maxdepth 2 -name "*.h" -exec cp {} "$DEST/" \; 2>/dev/null || true
+          find /tmp/llama-src/ggml/include -maxdepth 2 -name "*.h" -exec cp {} "$DEST/" \; 2>/dev/null || true
+          find /tmp/llama-src/ggml/src -maxdepth 2 -name "*.h" -exec cp {} "$DEST/" \; 2>/dev/null || true
+          find /tmp/llama-src -maxdepth 1 -name "*.h" -exec cp {} "$DEST/" \; 2>/dev/null || true
+
+          # common/
+          for name in common.cpp sampling.cpp; do
+            f=$(find /tmp/llama-src -maxdepth 3 -path "*/common/$name" -type f | head -n1)
+            if [ -n "$f" ]; then cp "$f" "$DEST/common/"; else echo "::warning::common/$name not found"; fi
+          done
+          find /tmp/llama-src -maxdepth 3 -path "*/common/*.h" -type f -exec cp {} "$DEST/common/" \; 2>/dev/null || true
+
           echo "--- llama/ contents ---"
-          ls ime-ai/src/main/cpp/llama/
+          ls "$DEST/"
           echo "--- llama/common/ contents ---"
-          ls ime-ai/src/main/cpp/llama/common/
+          ls "$DEST/common/"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
