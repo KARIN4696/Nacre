@@ -146,8 +146,11 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                 try {
                     if (!svc.isModelLoaded) {
                         val downloader = space.manus.nacre.ai.ModelDownloader(service)
-                        val modelFile = java.io.File(downloader.getModelsDir(), space.manus.nacre.ai.ModelDownloader.LLM_FILENAME)
-                        if (modelFile.exists() && modelFile.length() > 0) {
+                        // Search all standard locations (filesDir, external files, /sdcard/Download, MediaStore).
+                        // Users commonly sideload Qwen to /sdcard/Download/ before the in-app download flow exists.
+                        val modelPath = downloader.getLlmModelPath()
+                        if (modelPath != null) {
+                            val modelFile = java.io.File(modelPath)
                             writeDiagnostic("llmConnection: loading model ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024}MB)")
                             svc.loadModel(modelFile.absolutePath)
                             // Wait up to 30s for model load (Qwen 1.5B Q4_K_M takes ~3-8s)
@@ -161,7 +164,7 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                                 writeDiagnostic("llmConnection: model loaded successfully")
                             }
                         } else {
-                            writeDiagnostic("llmConnection: LLM model not present at ${modelFile.absolutePath} — refinement disabled")
+                            writeDiagnostic("llmConnection: LLM model not found in any known location — refinement disabled")
                         }
                     }
                     if (svc.isModelLoaded) {

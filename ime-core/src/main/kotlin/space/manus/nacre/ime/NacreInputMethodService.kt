@@ -146,15 +146,25 @@ class NacreInputMethodService :
                 val fullModel = java.io.File(modelsDir, "japanese-5gram.klm")
                 val compactModel = java.io.File(modelsDir, "japanese-compact.klm")
 
-                // Search for model anywhere on device (Download, Documents, etc.)
+                // Search for either model anywhere on device (Download, Documents, etc.)
+                // and copy into filesDir so subsequent loads are fast and deterministic.
+                val downloader = space.manus.nacre.ai.ModelDownloader(this@NacreInputMethodService)
                 if (!fullModel.exists()) {
-                    val downloader = space.manus.nacre.ai.ModelDownloader(this@NacreInputMethodService)
                     val foundPath = downloader.getKenLmModelPath()
                     if (foundPath != null && foundPath != fullModel.absolutePath) {
                         val extSource = java.io.File(foundPath)
-                        android.util.Log.i("NacreIME", "Copying KenLM model from ${extSource.absolutePath}...")
+                        android.util.Log.i("NacreIME", "Copying KenLM 5-gram from ${extSource.absolutePath}...")
                         extSource.copyTo(fullModel, overwrite = true)
-                        android.util.Log.i("NacreIME", "KenLM model copied (${fullModel.length() / 1024 / 1024}MB)")
+                        android.util.Log.i("NacreIME", "KenLM 5-gram copied (${fullModel.length() / 1024 / 1024}MB)")
+                    }
+                }
+                if (!fullModel.exists() && !compactModel.exists()) {
+                    val foundPath = downloader.getCompactKenLmModelPath()
+                    if (foundPath != null && foundPath != compactModel.absolutePath) {
+                        val extSource = java.io.File(foundPath)
+                        android.util.Log.i("NacreIME", "Copying compact KenLM from ${extSource.absolutePath}...")
+                        extSource.copyTo(compactModel, overwrite = true)
+                        android.util.Log.i("NacreIME", "Compact KenLM copied (${compactModel.length() / 1024 / 1024}MB)")
                     }
                 }
 
