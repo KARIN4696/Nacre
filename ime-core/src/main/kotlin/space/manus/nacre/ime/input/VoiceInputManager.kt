@@ -153,22 +153,23 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
                             val modelFile = java.io.File(modelPath)
                             writeDiagnostic("llmConnection: loading model ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024}MB)")
                             svc.loadModel(modelFile.absolutePath)
-                            // Wait up to 30s for model load (Qwen 1.5B Q4_K_M takes ~3-8s)
-                            for (i in 0 until 60) {
-                                Thread.sleep(500)
-                                if (svc.isModelLoaded) break
-                            }
-                            if (!svc.isModelLoaded) {
-                                writeDiagnostic("llmConnection: model load TIMEOUT after 30s")
-                            } else {
-                                writeDiagnostic("llmConnection: model loaded successfully")
-                            }
                         } else {
                             writeDiagnostic("llmConnection: LLM model not found in any known location — refinement disabled")
+                            return@Thread
                         }
+                    }
+                    // Poll until the model reports ready. Qwen 1.5B Q4_K_M (~1GB) typically
+                    // mmaps in 30–90s on mid-range Android; allow 3 min before giving up.
+                    val start = System.currentTimeMillis()
+                    while (!svc.isModelLoaded && System.currentTimeMillis() - start < 180_000) {
+                        Thread.sleep(500)
                     }
                     if (svc.isModelLoaded) {
                         llmService = svc
+                        val elapsed = (System.currentTimeMillis() - start) / 1000
+                        writeDiagnostic("llmConnection: model ready after ${elapsed}s")
+                    } else {
+                        writeDiagnostic("llmConnection: model load still pending after 180s — refinement disabled for this session")
                     }
                 } catch (e: Exception) {
                     writeDiagnostic("llmConnection EXCEPTION: ${e.message}")

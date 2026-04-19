@@ -35,6 +35,41 @@ jobs:
           cp -r /tmp/kenlm-src/lm ime-ai/src/main/cpp/kenlm/
           cp -r /tmp/kenlm-src/util ime-ai/src/main/cpp/kenlm/
 
+      - name: Clone llama.cpp source for native build
+        run: |
+          # Pin to b3500 (mid-July 2024). Matches the flat source layout and
+          # pre-sampler-chain API that nacre_llama_jni.cpp targets
+          # (llama_load_model_from_file / llama_batch_add / llama_sample_token_greedy).
+          git clone --depth 1 --branch b3500 https://github.com/ggerganov/llama.cpp.git /tmp/llama-src
+          mkdir -p ime-ai/src/main/cpp/llama/common
+          # Copy the source files the CMakeLists expects. Older llama.cpp keeps
+          # all core .cpp/.c/.h at the repo root with common/ as a subdir.
+          cp /tmp/llama-src/llama.cpp ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/llama-grammar.cpp ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/llama-sampling.cpp ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/llama-vocab.cpp ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/llama.h ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/llama-impl.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/llama-grammar.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/llama-sampling.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/llama-vocab.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/unicode.cpp ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/unicode.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/unicode-data.cpp ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/unicode-data.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/ggml.c ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/ggml-alloc.c ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/ggml-backend.c ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/ggml-quants.c ime-ai/src/main/cpp/llama/
+          cp /tmp/llama-src/ggml*.h ime-ai/src/main/cpp/llama/ 2>/dev/null || true
+          cp /tmp/llama-src/common/common.cpp ime-ai/src/main/cpp/llama/common/
+          cp /tmp/llama-src/common/sampling.cpp ime-ai/src/main/cpp/llama/common/
+          cp /tmp/llama-src/common/*.h ime-ai/src/main/cpp/llama/common/ 2>/dev/null || true
+          echo "--- llama/ contents ---"
+          ls ime-ai/src/main/cpp/llama/
+          echo "--- llama/common/ contents ---"
+          ls ime-ai/src/main/cpp/llama/common/
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
