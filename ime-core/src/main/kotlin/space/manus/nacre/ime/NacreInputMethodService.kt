@@ -158,21 +158,9 @@ class NacreInputMethodService :
                     }
                 }
 
-                // Extract bundled compact model from assets if no full model and compact not yet extracted
-                if (!fullModel.exists() && !compactModel.exists()) {
-                    try {
-                        assets.open("models/japanese-compact.klm").use { input ->
-                            compactModel.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                        android.util.Log.i("NacreIME", "Bundled compact KenLM extracted (${compactModel.length() / 1024 / 1024}MB)")
-                    } catch (_: Exception) {
-                        android.util.Log.i("NacreIME", "No bundled compact KenLM model in assets")
-                    }
-                }
-
-                // Load the best available model: full > compact
+                // Load the best available model: full > compact.
+                // Neither is bundled — both come from sideload (full 5-gram) or
+                // ModelDownloader.downloadCompactKenLm() (compact 3-gram).
                 val modelToLoad = when {
                     fullModel.exists() -> fullModel
                     compactModel.exists() -> compactModel

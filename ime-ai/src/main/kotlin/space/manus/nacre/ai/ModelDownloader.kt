@@ -55,6 +55,7 @@ class ModelDownloader(private val context: Context) {
             "vad" to (getVadModelPath() != null),
             "llm" to File(getModelsDir(), LLM_FILENAME).exists(),
             "kenlm" to File(getModelsDir(), KENLM_FILENAME).exists(),
+            "kenlm_compact" to File(getModelsDir(), COMPACT_KENLM_FILENAME).exists(),
         )
     }
 
@@ -134,7 +135,8 @@ class ModelDownloader(private val context: Context) {
     // ---- KenLM model ----
 
     /**
-     * Download the KenLM 5-gram Japanese language model.
+     * Download the KenLM 5-gram Japanese language model (~561MB, highest quality).
+     * Intended for power users who want Gboard+ level conversion quality.
      */
     fun downloadKenLm(onComplete: (Boolean) -> Unit) {
         downloadModel(
@@ -144,6 +146,23 @@ class ModelDownloader(private val context: Context) {
             onComplete = onComplete,
         )
     }
+
+    /**
+     * Download the compact KenLM 3-gram Japanese language model (~161MB).
+     * This is the default LM we suggest to most users on first run — it gives
+     * a large conversion-quality bump over no-LM fallback while staying small
+     * enough for quick download on mobile networks.
+     */
+    fun downloadCompactKenLm(onComplete: (Boolean) -> Unit) {
+        downloadModel(
+            url = COMPACT_KENLM_URL,
+            modelName = "KenLM 日本語3-gram (compact)",
+            fileName = COMPACT_KENLM_FILENAME,
+            onComplete = onComplete,
+        )
+    }
+
+    fun getCompactKenLmModelPath(): String? = findModelFile(COMPACT_KENLM_FILENAME)
 
     // ---- LLM (Qwen 2.5 1.5B Q4_K_M) ----
 
@@ -403,8 +422,10 @@ class ModelDownloader(private val context: Context) {
         const val SENSEVOICE_DIR = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
         const val VAD_FILENAME = "silero_vad.onnx"
         const val KENLM_FILENAME = "japanese-5gram.klm"
+        const val COMPACT_KENLM_FILENAME = "japanese-compact.klm"
         const val LLM_FILENAME = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
         const val KENLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/japanese-5gram.klm"
+        const val COMPACT_KENLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/japanese-compact.klm"
         const val LLM_URL = "https://github.com/RYOITABASHI/Nacre/releases/download/v0.1.0-models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
     }
 }
