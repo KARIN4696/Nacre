@@ -11,6 +11,26 @@
 #ifdef LLAMA_AVAILABLE
 #include "llama.h"
 #include <vector>
+
+// Inline replacements for the common/ helpers we dropped. These match the
+// b3500 common/common.h definitions byte-for-byte, just hoisted into this
+// translation unit so we don't need to pull in nlohmann/json & friends.
+static inline void nacre_batch_add(
+    llama_batch & batch,
+    llama_token id,
+    llama_pos pos,
+    llama_seq_id seq_id,
+    bool logits) {
+    batch.token   [batch.n_tokens] = id;
+    batch.pos     [batch.n_tokens] = pos;
+    batch.n_seq_id[batch.n_tokens] = 1;
+    batch.seq_id  [batch.n_tokens][0] = seq_id;
+    batch.logits  [batch.n_tokens] = logits;
+    batch.n_tokens++;
+}
+static inline void nacre_batch_clear(llama_batch & batch) {
+    batch.n_tokens = 0;
+}
 #endif
 
 static std::mutex g_mutex;
@@ -123,7 +143,7 @@ Java_space_manus_nacre_ai_LlamaJni_generate(JNIEnv* env, jobject, jstring prompt
     // Evaluate prompt
     llama_batch batch = llama_batch_init(n_tokens, 0, 1);
     for (int i = 0; i < n_tokens; i++) {
-        llama_batch_add(batch, tokens[i], i, {0}, false);
+        nacre_batch_add(batch, tokens[i], i, {0}, false);
     }
     batch.logits[batch.n_tokens - 1] = true;
 
@@ -164,8 +184,8 @@ Java_space_manus_nacre_ai_LlamaJni_generate(JNIEnv* env, jobject, jstring prompt
         }
 
         // Prepare next batch
-        llama_batch_clear(batch);
-        llama_batch_add(batch, new_token, n_cur, {0}, true);
+        nacre_batch_clear(batch);
+        nacre_batch_add(batch, new_token, n_cur, {0}, true);
         n_cur++;
 
         if (llama_decode(g_ctx, batch) != 0) {
