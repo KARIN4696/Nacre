@@ -1177,8 +1177,8 @@ private fun CloudLlmSection() {
             )
             Spacer(modifier = Modifier.height(12.dp))
             ApiKeyField(
-                label = "Gemini 2.5 Pro (Google AI Studio)",
-                hint = "ai.google.dev — 無料50/日",
+                label = "Gemini 2.5 Flash (Google AI Studio)",
+                hint = "ai.google.dev — 無料約1500/日（Proは無料枠ゼロなので Flash 固定）",
                 signupUrl = "https://aistudio.google.com/apikey",
                 initial = { space.manus.nacre.ai.cloud.CloudLlmConfig.geminiKey(context).orEmpty() },
                 onSave = { space.manus.nacre.ai.cloud.CloudLlmConfig.setGeminiKey(context, it) },

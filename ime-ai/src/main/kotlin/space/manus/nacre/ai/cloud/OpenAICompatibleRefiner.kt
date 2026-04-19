@@ -46,7 +46,9 @@ class OpenAICompatibleRefiner(
             val raw = stream.bufferedReader(Charsets.UTF_8).readText()
             if (code !in 200..299) {
                 Log.w(TAG, "$name HTTP $code: ${raw.take(200)}")
-                return Result.failure(IllegalStateException("$name HTTP $code"))
+                // Include a body snippet so the diagnostic log captures WHY the
+                // request failed (429/upstream/quota/etc) without needing logcat.
+                return Result.failure(IllegalStateException("$name HTTP $code — ${raw.take(160).replace('\n', ' ')}"))
             }
             val content = parseContent(raw)
                 ?: return Result.failure(IllegalStateException("$name: empty content"))
