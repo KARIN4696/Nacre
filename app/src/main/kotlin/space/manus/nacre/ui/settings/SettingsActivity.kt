@@ -1169,9 +1169,9 @@ private fun CloudLlmSection() {
 
             Spacer(modifier = Modifier.height(16.dp))
             ApiKeyField(
-                label = "Qwen 2.5 Max (Alibaba DashScope)",
-                hint = "dashscope-intl — Sティア精度",
-                signupUrl = "https://dashscope-intl.console.alibabacloud.com/",
+                label = "OpenRouter (Qwen3 Next 80B, 無料)",
+                hint = "openrouter.ai — メール登録だけ、完全無料",
+                signupUrl = "https://openrouter.ai/settings/keys",
                 initial = { space.manus.nacre.ai.cloud.CloudLlmConfig.qwenMaxKey(context).orEmpty() },
                 onSave = { space.manus.nacre.ai.cloud.CloudLlmConfig.setQwenMaxKey(context, it) },
             )

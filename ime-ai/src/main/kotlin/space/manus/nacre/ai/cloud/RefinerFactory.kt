@@ -6,7 +6,8 @@ import android.content.Context
  * Builds the production chain of cloud refiners in priority order.
  *
  * Quality-first ordering (highest quality → highest quota → fallback):
- * 1. Qwen 2.5 Max (Alibaba DashScope) — S-tier Japanese, limited free quota
+ * 1. OpenRouter Qwen3 Next 80B (free) — S-tier Japanese, completely free,
+ *    one key also unlocks every other OpenRouter model if we add them later
  * 2. Gemini 2.5 Pro (Google AI Studio) — S-tier, 50/day free
  * 3. DeepSeek V3 (DeepSeek direct) — S/A-tier, effectively unlimited free
  *
@@ -19,10 +20,9 @@ object RefinerFactory {
     fun build(ctx: Context): List<CloudLlmRefiner> {
         val all = listOf(
             OpenAICompatibleRefiner(
-                name = "Qwen 2.5 Max",
-                // International (non-CN) endpoint — OpenAI-compatible mode.
-                endpoint = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
-                model = "qwen-max",
+                name = "OpenRouter Qwen3 Next 80B",
+                endpoint = "https://openrouter.ai/api/v1/chat/completions",
+                model = "qwen/qwen3-next-80b-a3b-instruct:free",
                 apiKeyProvider = { CloudLlmConfig.qwenMaxKey(ctx) },
             ),
             OpenAICompatibleRefiner(
