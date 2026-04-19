@@ -2,9 +2,7 @@ package space.manus.nacre.ai
 
 import android.app.Service
 import android.content.Intent
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.os.RemoteException
 import android.util.Log
 import kotlinx.coroutines.*
@@ -34,24 +32,16 @@ import kotlinx.coroutines.*
 class LlmService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val handler = Handler(Looper.getMainLooper())
-    private val unloadHandler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var isGenerating = false
 
-    // Auto-unload after 30 seconds of inactivity (SPEC)
-    private val unloadRunnable = Runnable {
-        if (!isGenerating && LlamaJni.isModelLoaded()) {
-            Log.i(TAG, "Auto-unloading model after 30s inactivity")
-            LlamaJni.unloadModel()
-        }
-    }
-
-    private fun resetUnloadTimer() {
-        unloadHandler.removeCallbacks(unloadRunnable)
-        unloadHandler.postDelayed(unloadRunnable, UNLOAD_TIMEOUT_MS)
-    }
+    // NOTE: The former 30-second idle-auto-unload was removed because voice
+    // post-processing binds the service, loads the model, then waits for the
+    // user to speak. The idle window between load and the first transform()
+    // call is frequently >30s, so the timer was unloading the model before
+    // we could use it. Memory pressure still triggers unload via
+    // onTrimMemory; that's the right signal to free the ~1GB mmap.
 
     private val binder = object : ILlmService.Stub() {
 
@@ -68,12 +58,10 @@ class LlmService : Service() {
                 Log.i(TAG, "Loading LLM model: $modelPath")
                 val ok = LlamaJni.loadModel(modelPath)
                 Log.i(TAG, "LLM model loaded: $ok")
-                if (ok) resetUnloadTimer()
             }
         }
 
         override fun unloadModel() {
-            unloadHandler.removeCallbacks(unloadRunnable)
             LlamaJni.unloadModel()
             Log.i(TAG, "LLM model unloaded")
         }
@@ -85,7 +73,6 @@ class LlmService : Service() {
             }
 
             this@LlmService.isGenerating = true
-            resetUnloadTimer()
 
             scope.launch {
                 try {
@@ -106,7 +93,6 @@ class LlmService : Service() {
                     }
                 } finally {
                     this@LlmService.isGenerating = false
-                    resetUnloadTimer()
                 }
             }
         }
@@ -128,7 +114,6 @@ class LlmService : Service() {
         super.onTrimMemory(level)
         if (level >= TRIM_MEMORY_RUNNING_LOW && !isGenerating) {
             Log.w(TAG, "onTrimMemory($level) — force unloading model")
-            unloadHandler.removeCallbacks(unloadRunnable)
             LlamaJni.unloadModel()
         }
     }
@@ -256,7 +241,6 @@ class LlmService : Service() {
     }
 
     override fun onDestroy() {
-        unloadHandler.removeCallbacks(unloadRunnable)
         scope.cancel()
         if (LlamaJni.isModelLoaded()) {
             LlamaJni.unloadModel()
@@ -266,7 +250,6 @@ class LlmService : Service() {
 
     companion object {
         private const val TAG = "LlmService"
-        private const val UNLOAD_TIMEOUT_MS = 30_000L // 30 seconds (SPEC)
         private const val MAX_TOKENS = 512
 
         /** List of supported transformation commands for UI display */
