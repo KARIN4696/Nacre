@@ -1183,41 +1183,65 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
     }
 
     /**
-     * Stage 2: Try LLM refinement in background via in-process LlmService (AIDL).
-     * If the LLM returns a better result within the timeout, delete the quickClean
-     * text and replace it with the refined version.
+     * Stage 2: Try LLM refinement in background. Priority:
+     *   1. Cloud chain (Qwen Max → Gemini Pro → DeepSeek V3) if any API key configured
+     *   2. Local in-process LlmService (Qwen 1.5B) as offline fallback
+     * First success wins; otherwise the quickClean output stays committed.
      */
     private fun tryLlmRefinement(quickCleanText: String) {
         Thread {
             try {
+                val instruction = LlmPostProcessor.DICTATION_CLEANUP_INSTRUCTION
+
+                // Step 1: cloud chain
+                val cloudChain = space.manus.nacre.ai.cloud.RefinerFactory.build(service)
+                for (refiner in cloudChain) {
+                    val start = System.currentTimeMillis()
+                    val result = refiner.refine(quickCleanText, instruction, CLOUD_REFINE_TIMEOUT_MS)
+                    val elapsed = System.currentTimeMillis() - start
+                    if (result.isSuccess) {
+                        val refined = result.getOrNull()?.trim().orEmpty()
+                        writeDiagnostic("tryLlmRefinement[cloud:${refiner.name}]: ${elapsed}ms, refined='${refined.take(80)}'")
+                        applyRefinedIfDifferent(quickCleanText, refined, refiner.name)
+                        return@Thread
+                    } else {
+                        writeDiagnostic("tryLlmRefinement[cloud:${refiner.name}]: FAIL (${elapsed}ms) ${result.exceptionOrNull()?.message}")
+                    }
+                }
+
+                // Step 2: local AIDL Qwen fallback
                 val svc = llmService
                 if (svc == null || !svc.isModelLoaded) {
-                    writeDiagnostic("tryLlmRefinement: LLM model not loaded, skipping")
+                    writeDiagnostic("tryLlmRefinement: no cloud key + local LLM not loaded, keeping quickClean")
                     return@Thread
                 }
                 if (svc.isGenerating) {
-                    writeDiagnostic("tryLlmRefinement: LLM busy, skipping")
+                    writeDiagnostic("tryLlmRefinement[local]: busy, skipping")
                     return@Thread
                 }
                 val start = System.currentTimeMillis()
                 val refined = refineViaAidl(svc, quickCleanText, LLM_REFINE_TIMEOUT_MS)
                 val elapsed = System.currentTimeMillis() - start
-                writeDiagnostic("tryLlmRefinement: ${elapsed}ms, refined='${refined?.take(80)}'")
-
-                if (refined != null && refined != quickCleanText && refined.isNotBlank()) {
-                    Handler(Looper.getMainLooper()).post {
-                        val ic = service.currentInputConnection ?: return@post
-                        ic.deleteSurroundingText(quickCleanText.length, 0)
-                        ic.commitText(refined, 1)
-                        writeDiagnostic("tryLlmRefinement: replaced quickClean with LLM result")
-                    }
-                } else {
-                    writeDiagnostic("tryLlmRefinement: no improvement or timeout, keeping quickClean")
-                }
+                writeDiagnostic("tryLlmRefinement[local]: ${elapsed}ms, refined='${refined?.take(80)}'")
+                applyRefinedIfDifferent(quickCleanText, refined.orEmpty(), "local-qwen")
             } catch (e: Exception) {
                 writeDiagnostic("tryLlmRefinement: error ${e.javaClass.simpleName}: ${e.message}")
             }
         }.start()
+    }
+
+    /** If [refined] differs from the committed quickClean result, delete-and-replace on the UI thread. */
+    private fun applyRefinedIfDifferent(committed: String, refined: String, source: String) {
+        if (refined.isBlank() || refined == committed) {
+            writeDiagnostic("tryLlmRefinement[$source]: no improvement, keeping quickClean")
+            return
+        }
+        Handler(Looper.getMainLooper()).post {
+            val ic = service.currentInputConnection ?: return@post
+            ic.deleteSurroundingText(committed.length, 0)
+            ic.commitText(refined, 1)
+            writeDiagnostic("tryLlmRefinement[$source]: replaced quickClean with LLM result")
+        }
     }
 
     /**
@@ -1275,6 +1299,11 @@ class VoiceInputManager(private val service: NacreInputMethodService) {
         // LLM refinement timeout. Qwen 2.5 1.5B Q4_K_M on modern Android typically
         // finishes a ~100-char dictation in 1-3s; allow headroom before giving up.
         private const val LLM_REFINE_TIMEOUT_MS = 8_000L
+
+        // Cloud refiner per-attempt timeout. Gemini Pro / Qwen Max usually finish
+        // in 500-1500ms; allow a few seconds of tail before falling through to
+        // the next provider in the chain.
+        private const val CLOUD_REFINE_TIMEOUT_MS = 6_000
         // No deferred commit timer — Typeless model: commit only on user stop action
         private val RECOVERABLE_ERRORS = setOf(
             SpeechRecognizer.ERROR_NO_MATCH,

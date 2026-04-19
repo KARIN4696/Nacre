@@ -174,6 +174,12 @@ fun NacreSettingsScreen() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // --- Cloud LLM (voice refinement) ---
+        SectionHeader("Cloud LLM (voice refinement)")
+        CloudLlmSection()
+
+        Spacer(modifier = Modifier.height(24.dp))
+
         // --- Reset ---
         var showResetDialog by remember { mutableStateOf(false) }
         Button(
@@ -1128,6 +1134,152 @@ private fun WhisperModelSection() {
                     Text("VAD: not found", color = Color(0xFFFF6666), fontSize = 11.sp)
                 }
             }
+        }
+    }
+}
+
+/**
+ * API key inputs for the cloud LLM voice-refinement chain.
+ *
+ * Keys are stored per-device via CloudLlmConfig (SharedPreferences, not
+ * backed up). When multiple keys are set, VoiceInputManager tries them in
+ * priority order: Qwen Max → Gemini Pro → DeepSeek V3. None of them are
+ * required — if all are blank the app falls back to the on-device Qwen 1.5B.
+ */
+@Composable
+private fun CloudLlmSection() {
+    val context = LocalContext.current
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = NacreSurface),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "音声入力の整文に使うクラウドLLM。キーを貼ると優先順（Qwen → Gemini → DeepSeek）で試し、全て失敗時のみローカルQwenにフォールバック。",
+                color = NacreTextDim,
+                fontSize = 12.sp,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "キー未設定時はオフライン（ローカルQwen）のみで動作。キーは端末内にのみ保存されます。",
+                color = NacreTextDim.copy(alpha = 0.8f),
+                fontSize = 11.sp,
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            ApiKeyField(
+                label = "Qwen 2.5 Max (Alibaba DashScope)",
+                hint = "dashscope-intl — Sティア精度",
+                signupUrl = "https://dashscope-intl.console.alibabacloud.com/",
+                initial = { space.manus.nacre.ai.cloud.CloudLlmConfig.qwenMaxKey(context).orEmpty() },
+                onSave = { space.manus.nacre.ai.cloud.CloudLlmConfig.setQwenMaxKey(context, it) },
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ApiKeyField(
+                label = "Gemini 2.5 Pro (Google AI Studio)",
+                hint = "ai.google.dev — 無料50/日",
+                signupUrl = "https://aistudio.google.com/apikey",
+                initial = { space.manus.nacre.ai.cloud.CloudLlmConfig.geminiKey(context).orEmpty() },
+                onSave = { space.manus.nacre.ai.cloud.CloudLlmConfig.setGeminiKey(context, it) },
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ApiKeyField(
+                label = "DeepSeek V3 (DeepSeek direct)",
+                hint = "platform.deepseek.com — 実質無制限無料",
+                signupUrl = "https://platform.deepseek.com/api_keys",
+                initial = { space.manus.nacre.ai.cloud.CloudLlmConfig.deepSeekKey(context).orEmpty() },
+                onSave = { space.manus.nacre.ai.cloud.CloudLlmConfig.setDeepSeekKey(context, it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ApiKeyField(
+    label: String,
+    hint: String,
+    signupUrl: String,
+    initial: () -> String,
+    onSave: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    var value by remember { mutableStateOf(initial()) }
+    var revealed by remember { mutableStateOf(false) }
+    val hasKey = value.isNotBlank()
+
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = NacreText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Spacer(modifier = Modifier.width(8.dp))
+            if (hasKey) {
+                Text("●", color = Color(0xFF4CAF50), fontSize = 10.sp)
+            } else {
+                Text("—", color = NacreTextDim, fontSize = 10.sp)
+            }
+        }
+        Text(hint, color = NacreTextDim, fontSize = 11.sp)
+        Spacer(modifier = Modifier.height(4.dp))
+
+        OutlinedTextField(
+            value = value,
+            onValueChange = { value = it },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (revealed || value.isEmpty())
+                androidx.compose.ui.text.input.VisualTransformation.None
+            else
+                androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            placeholder = { Text("sk-…  /  key…", color = NacreTextDim.copy(alpha = 0.5f), fontSize = 12.sp) },
+            textStyle = androidx.compose.ui.text.TextStyle(
+                color = NacreText, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+            ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = NacreAccent,
+                unfocusedBorderColor = NacreTextDim.copy(alpha = 0.3f),
+                cursorColor = NacreAccent,
+            ),
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = {
+                    onSave(value.trim())
+                    Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NacreAccent,
+                    contentColor = Color.Black,
+                ),
+                modifier = Modifier.weight(1f),
+            ) { Text("Save", fontSize = 12.sp) }
+            Button(
+                onClick = { revealed = !revealed },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NacreSurface,
+                    contentColor = NacreAccent,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, NacreAccent),
+                modifier = Modifier.weight(1f),
+            ) { Text(if (revealed) "Hide" else "Show", fontSize = 12.sp) }
+            Button(
+                onClick = {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(signupUrl))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(intent)
+                    } catch (_: Exception) {}
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NacreSurface,
+                    contentColor = NacreTextDim,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, NacreTextDim.copy(alpha = 0.4f)),
+                modifier = Modifier.weight(1f),
+            ) { Text("Get key", fontSize = 12.sp) }
         }
     }
 }
