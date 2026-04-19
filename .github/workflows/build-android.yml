@@ -60,8 +60,10 @@ jobs:
             if [ -n "$f" ]; then cp "$f" "$DEST/"; else echo "::warning::$name not found"; fi
           done
 
-          # ggml sources (src/ or ggml/src or root)
-          for name in ggml.c ggml-alloc.c ggml-backend.c ggml-quants.c; do
+          # ggml sources (src/ or ggml/src or root). ggml-aarch64.c holds the
+          # ARM64 SIMD kernels (quantize_q4_0_*, ggml_gemv/gemm_q4_0_*x*_q8_0);
+          # without it the link step fails with undefined symbols.
+          for name in ggml.c ggml-alloc.c ggml-backend.c ggml-quants.c ggml-aarch64.c; do
             f=$(find /tmp/llama-src -maxdepth 4 -name "$name" -type f | head -n1)
             if [ -n "$f" ]; then cp "$f" "$DEST/"; else echo "::warning::$name not found"; fi
           done

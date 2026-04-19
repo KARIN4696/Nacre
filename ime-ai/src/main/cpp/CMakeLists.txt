@@ -23,6 +23,10 @@ if(EXISTS ${LLAMA_DIR}/llama.cpp)
         ${LLAMA_DIR}/ggml-backend.c
         ${LLAMA_DIR}/ggml-quants.c
     )
+    if(EXISTS ${LLAMA_DIR}/ggml-aarch64.c)
+        # ARM64 SIMD kernels — required on arm64-v8a Android for Q4_0 quantization.
+        list(APPEND LLAMA_CORE_SRCS ${LLAMA_DIR}/ggml-aarch64.c)
+    endif()
     if(EXISTS ${LLAMA_DIR}/unicode.cpp)
         list(APPEND LLAMA_CORE_SRCS ${LLAMA_DIR}/unicode.cpp)
     endif()
