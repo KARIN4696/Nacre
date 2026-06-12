@@ -1,7 +1,7 @@
 name: Android CI
 
 on:
-  workflow_dispatch: # 手動でビルドを実行できるようにする設定
+  workflow_dispatch: # 手動ビルド用
 
 jobs:
   build:
@@ -17,6 +17,10 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
         cache: gradle
+
+    # エラー対策：Android SDKとビルドツールを最新化するステップを追加
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
