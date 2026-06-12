@@ -18,9 +18,14 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    # エラー対策：Android SDKとビルドツールを最新化するステップを追加
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
+
+    # 🔥【追加】エラーの原因になっているTermux用のaapt2設定を強制消去する
+    - name: Fix Termux AAPT2 Override Error
+      run: |
+        find . -name "*.gradle" -o -name "*.gradle.kts" | xargs sed -i '/aapt2FromMavenOverride/d'
+        find . -name "*.properties" | xargs sed -i '/aapt2FromMavenOverride/d'
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
